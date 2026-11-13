@@ -14,9 +14,16 @@ CORES = {"baixo": "#2e7d32", "medio": "#ef6c00", "alto": "#c62828", "indetermina
 def _executar(arquivo, colaborador, valor_solicitado, valor_maximo, prazo, online, registrar):
     if not arquivo:
         raise gr.Error("Envie a imagem ou o PDF do comprovante.")
-    pol = Politica(valor_maximo=valor_maximo, prazo_dias=int(prazo), online=online, registrar=registrar)
-    r = analisar(arquivo, pol, colaborador=colaborador or "",
-                 valor_solicitado=valor_solicitado if valor_solicitado else None)
+    padrao = Politica()
+    pol = Politica(
+        valor_maximo=float(valor_maximo) if valor_maximo else padrao.valor_maximo,
+        prazo_dias=int(prazo) if prazo else padrao.prazo_dias,
+        online=online, registrar=registrar)
+    try:
+        r = analisar(arquivo, pol, colaborador=(colaborador or "").strip(),
+                     valor_solicitado=valor_solicitado if valor_solicitado else None)
+    except ValueError as e:  # arquivo vazio, corrompido, protegido por senha...
+        raise gr.Error(str(e)) from e
 
     res = r.dados.get("resumo", {})
     cor = CORES[r.nivel]

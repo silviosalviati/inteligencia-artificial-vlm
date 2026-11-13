@@ -20,7 +20,10 @@ def consulta_cnpj(cnpj: str) -> dict:
         return {"status": "nao_encontrado"}
     if r.status_code != 200:
         return {"status": "erro", "erro": f"HTTP {r.status_code}"}
-    d = r.json()
+    try:
+        d = r.json()
+    except ValueError:
+        return {"status": "erro", "erro": "resposta inválida da BrasilAPI"}
     return {
         "status": "ok",
         "razao_social": d.get("razao_social"),

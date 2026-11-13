@@ -23,9 +23,6 @@ EDITORES = [
     "word", "excel", "google docs", "chatgpt", "dall-e", "midjourney", "stable diffusion",
 ]
 
-FORMATOS_IMAGEM = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
-
-
 @dataclass
 class Documento:
     caminho: Path
@@ -43,8 +40,18 @@ def carregar(caminho: str | Path, max_paginas: int = 2) -> Documento:
     sha = hashlib.sha256(dados).hexdigest()
     ext = caminho.suffix.lower()
 
+    if not dados:
+        raise ValueError(f"Arquivo vazio: {caminho.name}")
+
     if ext == ".pdf" or dados[:5] == b"%PDF-":
-        doc = pymupdf.open(stream=dados, filetype="pdf")
+        try:
+            doc = pymupdf.open(stream=dados, filetype="pdf")
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"PDF corrompido ou ilegível: {caminho.name} ({e})") from e
+        if doc.needs_pass:
+            raise ValueError(f"PDF protegido por senha: {caminho.name}")
+        if doc.page_count == 0:
+            raise ValueError(f"PDF sem páginas: {caminho.name}")
         paginas, texto = [], []
         for i, pg in enumerate(doc):
             texto.append(pg.get_text())
@@ -55,7 +62,12 @@ def carregar(caminho: str | Path, max_paginas: int = 2) -> Documento:
         versoes = getattr(doc, "version_count", 1) or 1
         return Documento(caminho, sha, "pdf", paginas, meta, "\n".join(texto), versoes)
 
-    img = Image.open(io.BytesIO(dados))
+    try:
+        img = Image.open(io.BytesIO(dados))
+        img.load()
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"Formato não suportado ou imagem corrompida: {caminho.name}. "
+                         "Envie JPG, PNG, WEBP ou PDF.") from e
     meta = {}
     try:
         exif = img.getexif()

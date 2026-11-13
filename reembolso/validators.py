@@ -91,20 +91,32 @@ def para_float(v) -> float | None:
     s = re.sub(r"[^\d,.\-]", "", str(v))
     if not s:
         return None
-    if "," in s:  # formato BR: 1.234,56
-        s = s.replace(".", "").replace(",", ".")
+    if "," in s and "." in s:
+        # o separador que aparece por último é o decimal: 1.234,56 (BR) ou 1,234.56 (US)
+        mil, dec = (".", ",") if s.rfind(",") > s.rfind(".") else (",", ".")
+        s = s.replace(mil, "").replace(dec, ".")
+    elif "," in s:  # formato BR: 1234,56
+        s = s.replace(",", ".")
     try:
         return float(s)
     except ValueError:
         return None
 
 
+_DATA_RE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}")
+
+
 def para_data(v: str | None) -> date | None:
+    """Aceita DD/MM/AAAA, DD/MM/AA, AAAA-MM-DD etc., mesmo com hora junto ("05/11/26 14:30")."""
     if not v:
         return None
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+    m = _DATA_RE.search(str(v))
+    if not m:
+        return None
+    s = m.group(0)
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y", "%d.%m.%Y", "%d.%m.%y"):
         try:
-            return datetime.strptime(str(v).strip()[:10], fmt).date()
+            return datetime.strptime(s, fmt).date()
         except ValueError:
             continue
     return None

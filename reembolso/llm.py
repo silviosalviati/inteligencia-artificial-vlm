@@ -11,6 +11,7 @@ from PIL import Image
 
 LLM_URL = os.environ.get("REEMBOLSO_LLM_URL", "http://127.0.0.1:8080/v1/chat/completions")
 TIMEOUT = int(os.environ.get("REEMBOLSO_LLM_TIMEOUT", "900"))
+MAX_TEXTO_PDF = int(os.environ.get("REEMBOLSO_MAX_TEXTO_PDF", "3000"))
 LADO_MAX = int(os.environ.get("REEMBOLSO_IMG_LADO", "1024"))
 
 _num = {"type": ["number", "null"]}
@@ -110,7 +111,7 @@ def analisar_imagem(paginas: list[Image.Image], texto_pdf: str = "") -> dict:
     extra = ""
     if texto_pdf.strip():
         extra = ("\nO PDF também possui camada de texto (abaixo). Use-a para conferir a leitura, "
-                 "mas a imagem é a referência:\n---\n" + texto_pdf[:4000] + "\n---\n")
+                 "mas a imagem é a referência:\n---\n" + texto_pdf[:MAX_TEXTO_PDF] + "\n---\n")
     conteudo = [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_b64(p)}"}}
                 for p in paginas]
     conteudo.append({"type": "text", "text": PROMPT.format(extra=extra)})
@@ -136,12 +137,19 @@ def analisar_imagem(paginas: list[Image.Image], texto_pdf: str = "") -> dict:
         if not linha or not linha.startswith("data: ") or linha == "data: [DONE]":
             continue
         ev = json.loads(linha[6:])
+        if ev.get("error"):
+            raise RuntimeError(f"servidor do modelo retornou erro: {ev['error']}")
         for ch in ev.get("choices") or []:
             partes.append((ch.get("delta") or {}).get("content") or "")
         tempos = ev.get("timings") or tempos
     texto = "".join(partes)
     inicio, fim = texto.find("{"), texto.rfind("}")
-    dados = json.loads(texto[inicio:fim + 1])
+    if inicio < 0 or fim < inicio:
+        raise ValueError(f"resposta do modelo sem JSON: {texto[:200]!r}")
+    try:
+        dados = json.loads(texto[inicio:fim + 1])
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON incompleto na resposta do modelo (contexto cheio?): {e}") from e
     if tempos:
         dados["_desempenho"] = {
             "leitura_s": round(tempos.get("prompt_ms", 0) / 1000, 1),

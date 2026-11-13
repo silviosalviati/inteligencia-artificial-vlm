@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -11,14 +12,20 @@ DB = Path(__file__).resolve().parent.parent / "dados" / "historico.sqlite"
 LIMIAR_PHASH = 18  # bits diferentes (hash de 256 bits); abaixo disso = mesma imagem
 
 
-def _con() -> sqlite3.Connection:
-    DB.parent.mkdir(exist_ok=True)
-    con = sqlite3.connect(DB)
+@contextmanager
+def _con():
+    """Abre, faz commit (ou rollback) e FECHA a conexão."""
+    DB.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(DB)) as con, con:
+        _criar_tabela(con)
+        yield con
+
+
+def _criar_tabela(con: sqlite3.Connection) -> None:
     con.execute("""CREATE TABLE IF NOT EXISTS reembolsos (
         id INTEGER PRIMARY KEY, criado_em TEXT, colaborador TEXT, arquivo TEXT,
         sha256 TEXT, phash TEXT, chave TEXT, cnpj TEXT, numero TEXT,
         data_emissao TEXT, total REAL, score INTEGER)""")
-    return con
 
 
 def buscar_duplicados(sha256: str, phash: str, chave: str | None, cnpj: str | None,

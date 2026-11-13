@@ -122,6 +122,8 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         r.erro_llm = "Servidor do modelo não está rodando (python start_llm.py)."
     if r.erro_llm:
         r.add("Extração", "alerta", f"Extração por IA indisponível: {r.erro_llm}", 0)
+        if pol.registrar:
+            r.add("Duplicidade", "info", "Análise incompleta: não registrada no histórico.")
     r.dados["extraido"] = ext
 
     emit = ext.get("emitente") or {}
@@ -129,7 +131,8 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     cpf = limpa(emit.get("cpf")) or None
     total = para_float(ext.get("total"))
     data_em = para_data(ext.get("data_emissao"))
-    numero = (ext.get("numero_documento") or "").lstrip("0") or None
+    # "Nº 000.012.345" (DANFE) → "12345", para comparar com a chave e com o histórico
+    numero = limpa(ext.get("numero_documento")).lstrip("0") or None
     tipo = ext.get("tipo_documento")
 
     # chave: QR > texto do PDF > leitura do modelo
@@ -279,7 +282,9 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         r.nivel = "indeterminado"
         r.recomendacao = "Análise incompleta (IA indisponível): dados não foram extraídos nem conferidos."
 
-    if pol.registrar:
+    # Análise incompleta não vai para o histórico: senão, ao reanalisar o mesmo arquivo
+    # com a IA no ar, ele seria acusado como duplicata de si mesmo.
+    if pol.registrar and not r.erro_llm:
         r.id_historico = historico.registrar(colaborador, doc.caminho.name, doc.sha256, ph, chave, cnpj,
                                              numero, f"{data_em:%Y-%m-%d}" if data_em else None, total, r.score)
     r.dados["resumo"] = {

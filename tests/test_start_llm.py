@@ -46,7 +46,7 @@ class TestStartLlm(unittest.TestCase):
         comando = run.call_args.args[0]
         self.assertEqual(comando[0], str(servidor))
         self.assertNotIn("-ngl", comando)
-        self.assertEqual(comando[comando.index("-c") + 1], "4096")
+        self.assertEqual(comando[comando.index("-c") + 1], str(start_llm.CONTEXTO_PADRAO))
         self.assertEqual(comando[comando.index("--image-max-tokens") + 1], "768")
 
     def test_permite_selecionar_cpu(self):
@@ -56,6 +56,15 @@ class TestStartLlm(unittest.TestCase):
             run.return_value.returncode = 0
             self.assertEqual(start_llm.iniciar(0), 0)
         self.assertEqual(run.call_args.args[0][-2:], ["-ngl", "0"])
+
+    def test_contexto_e_opcoes_extras(self):
+        (self.root / "bin" / "llama-b12292" / "llama-server").touch()
+        with patch.object(start_llm.sys, "platform", "linux"),                 patch.object(start_llm.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.assertEqual(start_llm.iniciar(None, 16384, ["--port", "8081"]), 0)
+        comando = run.call_args.args[0]
+        self.assertEqual(comando[comando.index("-c") + 1], "16384")
+        self.assertEqual(comando[-2:], ["--port", "8081"])
 
     def test_arquivos_ausentes_sao_reportados(self):
         erro = io.StringIO()

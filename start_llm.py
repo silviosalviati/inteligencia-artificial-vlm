@@ -9,9 +9,11 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parent
+# 2 páginas × 768 tokens de imagem + texto do PDF + prompt + até 2048 tokens de resposta
+CONTEXTO_PADRAO = 8192
 
 
-def iniciar(gpu_layers=None):
+def iniciar(gpu_layers=None, contexto=CONTEXTO_PADRAO, extras=()):
     if sys.platform == "win32":
         executavel = "llama-server.exe"
         if gpu_layers is None:
@@ -35,11 +37,12 @@ def iniciar(gpu_layers=None):
     comando = [
         str(servidor), "-m", str(modelo), "--mmproj", str(mmproj),
         "--host", "127.0.0.1", "--port", "8080",
-        "-np", "1", "-c", "4096", "-t", str(os.cpu_count() or 1),
+        "-np", "1", "-c", str(contexto), "-t", str(os.cpu_count() or 1),
         "--image-max-tokens", "768", "--jinja",
     ]
     if gpu_layers is not None:
         comando.extend(["-ngl", str(gpu_layers)])
+    comando.extend(extras)
 
     try:
         return subprocess.run(comando, check=False).returncode
@@ -51,15 +54,23 @@ def iniciar(gpu_layers=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Opções não reconhecidas são repassadas ao llama-server (ex.: --port 8081).")
     parser.add_argument(
         "--gpu-layers", type=int, default=None, metavar="N",
         help="número de camadas na GPU (Windows: 99 por padrão; use 0 para CPU)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--ctx", type=int, default=CONTEXTO_PADRAO, metavar="N",
+        help=f"tamanho do contexto em tokens (padrão: {CONTEXTO_PADRAO})",
+    )
+    args, extras = parser.parse_known_args()
     if args.gpu_layers is not None and args.gpu_layers < 0:
         parser.error("--gpu-layers deve ser maior ou igual a zero")
-    return iniciar(args.gpu_layers)
+    if args.ctx < 2048:
+        parser.error("--ctx deve ser de pelo menos 2048")
+    return iniciar(args.gpu_layers, args.ctx, extras)
 
 
 if __name__ == "__main__":

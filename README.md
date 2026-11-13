@@ -53,44 +53,59 @@ uma versão CPU não utiliza a placa de vídeo.
 
 ## Como rodar
 
-São dois terminais. No Linux:
+São dois terminais: um para o modelo de visão e outro para a interface.
 
-```bash
-# Terminal 1 — modelo de visão (Qwen3-VL-4B, GGUF Q4, CPU) em http://127.0.0.1:8080
-./start_llm.sh
-
-# Terminal 2 — interface web em http://127.0.0.1:7860
-.venv/bin/python -m reembolso.app
-
-# ou pela linha de comando
-.venv/bin/python -m reembolso.cli recibos/arquivo.pdf --valor 30
-.venv/bin/python -m reembolso.cli recibos/arquivo.pdf --json --offline --nao-registrar
-```
-
-No Windows (PowerShell):
+Windows (PowerShell):
 
 ```powershell
-# Terminal 1 — modelo de visão em http://127.0.0.1:8080
+# Terminal 1 — modelo de visão em http://127.0.0.1:8080 (deixe aberto)
 .\.venv\Scripts\python.exe start_llm.py
 
-# Terminal 2 — interface web em http://127.0.0.1:7860
+# Terminal 2 — interface web
 .\.venv\Scripts\python.exe -m reembolso.app
-
-# ou pela linha de comando
-.\.venv\Scripts\python.exe -m reembolso.cli arquivos\arquivo.pdf --valor 30
-.\.venv\Scripts\python.exe -m reembolso.cli arquivos\arquivo.pdf --json --offline --nao-registrar
 ```
 
-Substitua `arquivo.pdf` pelo nome do comprovante. A pasta `arquivos/` é ignorada pelo Git
-para evitar que recibos locais sejam adicionados acidentalmente ao repositório.
+Linux:
 
-O inicializador detecta Windows ou Linux e usa os arquivos na pasta do projeto, independentemente do
-diretório atual. No Windows, solicita até 99 camadas na GPU; isso exige um binário com suporte à GPU.
-Para usar apenas CPU, acrescente `--gpu-layers 0`. No Linux, o padrão do llama.cpp é mantido;
-use `--gpu-layers N` para ajustar o número de camadas na GPU em qualquer sistema.
-O comando `./start_llm.sh` continua disponível no Linux e aceita as mesmas opções.
+```bash
+.venv/bin/python start_llm.py        # Terminal 1
+.venv/bin/python -m reembolso.app    # Terminal 2
+```
 
-Em CPU (i5-7300U), cada análise com IA leva de 1 a 4 minutos.
+Abra **http://127.0.0.1:7860** no navegador, **arraste ou selecione o comprovante** (foto ou PDF),
+informe opcionalmente o colaborador e o valor solicitado e clique em **Analisar**. O sistema não lê
+nenhuma pasta sozinho: analisa apenas o arquivo enviado.
+
+### Linha de comando (opcional)
+
+Para analisar um arquivo sem abrir o navegador, passe o caminho de qualquer comprovante:
+
+```powershell
+.\.venv\Scripts\python.exe -m reembolso.cli "C:\caminho\do\comprovante.pdf" --valor 30
+.\.venv\Scripts\python.exe -m reembolso.cli "C:\caminho\do\comprovante.jpg" --json --offline --nao-registrar
+```
+
+As pastas `arquivos/` e `recibos/` são ignoradas pelo Git, caso você queira guardar comprovantes
+localmente sem que eles sejam enviados ao repositório.
+
+### Opções do inicializador do modelo
+
+- No Windows, `start_llm.py` solicita até 99 camadas na GPU (exige o binário CUDA). Para usar só a CPU:
+  `--gpu-layers 0`. No Linux, o padrão do llama.cpp é mantido; use `--gpu-layers N` para ajustar.
+- `--ctx N` define o contexto (padrão 8192 tokens, suficiente para PDF de 2 páginas com texto).
+  Em máquina com pouca RAM, `--ctx 4096` economiza ~600 MB, mas PDFs longos podem falhar.
+- Outras opções são repassadas ao `llama-server` (ex.: `--port 8081`; nesse caso defina também
+  `REEMBOLSO_LLM_URL=http://127.0.0.1:8081/v1/chat/completions` antes de abrir a interface).
+
+Em CPU (i5-7300U), cada análise com IA leva de 1 a 4 minutos; com GPU, poucos segundos.
+
+## Testes
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v
+```
+
+Os testes não precisam do modelo nem de internet: a resposta da IA é simulada.
 
 ## O que é verificado
 
@@ -120,7 +135,6 @@ O sistema prioriza a revisão; **não deve reprovar sozinho**.
 
 ```
 start_llm.py            sobe o llama-server no Windows ou Linux
-start_llm.sh            atalho Linux para o inicializador
 models/                 GGUF baixados de huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF
 bin/                    llama.cpp b12292 (CPU ou GPU)
 reembolso/pipeline.py   orquestração, regras e score
@@ -131,5 +145,5 @@ reembolso/historico.py  duplicidade (SQLite)
 reembolso/online.py     consulta CNPJ (BrasilAPI)
 reembolso/app.py        interface Gradio
 reembolso/cli.py        linha de comando
-tests/                  .venv/bin/python -m tests.test_validators
+tests/                  python -m unittest
 ```
