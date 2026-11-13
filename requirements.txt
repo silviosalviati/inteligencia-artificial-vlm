@@ -1,0 +1,7 @@
+gradio==6.31.0
+pymupdf==2.1
+pillow==12.3.0
+ImageHash==4.3.2
+opencv-python-headless==5.0.0.93
+numpy==2.5.4
+requests==2.34.2

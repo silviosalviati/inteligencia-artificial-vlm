@@ -1,0 +1,14 @@
+# Ambiente Python
+.venv/
+__pycache__/
+*.pyc
+
+# Modelos e binários (baixados; grandes demais para o Git)
+models/
+bin/
+*.gguf
+
+# Dados sensíveis: recibos reais e histórico de reembolsos
+recibos/
+dados/
+*.sqlite
