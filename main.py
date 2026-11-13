@@ -24,7 +24,6 @@ ROOT = Path(__file__).resolve().parent
 VERSAO_LLAMA = "llama-b12292"
 MODELO = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
 MMPROJ = "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"
-# 2 páginas × 768 tokens de imagem + texto do PDF + prompt + até 2048 tokens de resposta
 CONTEXTO_PADRAO = 8192
 HOST = "127.0.0.1"
 PORTA_MODELO = 8080

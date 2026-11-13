@@ -67,6 +67,15 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(r.nivel, "alto")
         self.assertTrue(any("duplicata" in m for m in self.mensagens(r, "falha")))
 
+    def test_varias_duplicatas_viram_uma_checagem(self):
+        for _ in range(3):
+            self.rodar()
+        r = self.rodar()
+        dup = [c for c in r.checagens if c.categoria == "Duplicidade"]
+        self.assertEqual(len(dup), 1)
+        self.assertIn("Também coincide com 2 outro(s): #2, #3", dup[0].mensagem)
+        self.assertEqual(len(r.dados["duplicatas"]), 3)
+
     def test_ia_indisponivel_nao_registra_no_historico(self):
         r = self.rodar(disponivel=False)
         self.assertEqual(r.nivel, "indeterminado")
@@ -81,6 +90,34 @@ class TestPipeline(unittest.TestCase):
         self.assertTrue(any("Soma dos itens" in m for m in self.mensagens(r, "alerta")))
         self.assertTrue(any("INVÁLIDO" in m for m in self.mensagens(r, "falha")))
         self.assertEqual(r.nivel, "alto")
+
+    def test_chave_lida_como_link_do_qr(self):
+        url = f"https://www.nfce.fazenda.sp.gov.br/qrcode?p={chave_valida()}|2|1|1|ABCDEF"
+        r = self.rodar(extracao(chave_acesso=url), registrar=False)
+        self.assertEqual(r.dados["resumo"]["chave_acesso"], chave_valida())
+        self.assertFalse(any("tamanho inválido" in m for m in self.mensagens(r, "falha")))
+        self.assertIn(url, r.links_consulta)
+
+    def test_preenchimento_com_zeros_e_nao_indicios(self):
+        ext = extracao(emitente={"razao_social": "X", "cnpj": "00000000000000"},
+                       chave_acesso="5725" + "0" * 40,
+                       sinais_suspeitos=[{"descricao": "Soma confere — não é indício.", "gravidade": "baixa"},
+                                         {"descricao": "Valor com fonte diferente", "gravidade": "alta"}])
+        r = self.rodar(ext, registrar=False)
+        self.assertFalse(any("INVÁLIDO" in m for m in self.mensagens(r, "falha")))
+        self.assertIsNone(r.dados["resumo"]["cnpj"])
+        visuais = [c for c in r.checagens if c.categoria == "Análise visual (IA)"]
+        self.assertEqual([(c.status, c.peso) for c in visuais], [("alerta", 20)])
+
+    def test_cnpj_do_banco_do_brasil_na_chave_nao_e_descartado(self):
+        from reembolso.validators import dv_chave
+        base = "53" + "2610" + "00000000000191" + "55" + "001" + "000000123" + "1" + "00000001"
+        chave = base + str(dv_chave(base))
+        ext = extracao(emitente={"razao_social": "Banco do Brasil", "cnpj": "00.000.000/0001-91"},
+                       chave_acesso=chave, numero_documento="123", data_emissao="05/10/2026")
+        r = self.rodar(ext, registrar=False)
+        self.assertEqual(r.dados["resumo"]["chave_acesso"], chave)
+        self.assertEqual(self.mensagens(r, "falha"), [])
 
     def test_arquivo_corrompido_gera_erro_legivel(self):
         ruim = self.dir / "ruim.jpg"

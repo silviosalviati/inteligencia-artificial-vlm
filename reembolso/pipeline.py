@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import difflib
+import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 
 from . import forensics as fx
@@ -41,6 +42,12 @@ class Resultado:
     erro_llm: str | None = None
     id_historico: int | None = None
 
+    def para_dict(self) -> dict:
+        """Resultado em formato JSON (API e linha de comando)."""
+        return {"score": self.score, "nivel": self.nivel, "recomendacao": self.recomendacao,
+                "checagens": [asdict(c) for c in self.checagens], "links_consulta": self.links_consulta,
+                "id_historico": self.id_historico, "dados": self.dados}
+
     def add(self, categoria, status, mensagem, peso=0):
         self.checagens.append(Checagem(categoria, status, mensagem, peso if status in ("alerta", "falha") else 0))
 
@@ -50,6 +57,19 @@ def _norm(s: str | None) -> str:
     for t in (" LTDA", " EIRELI", " S/A", " S.A.", " SA", " ME", " EPP", " MEI", "-", ".", ","):
         s = s.replace(t, " ")
     return " ".join(s.split())
+
+
+def _lido(valor: str | None) -> str | None:
+    """Normaliza um identificador lido pela IA; preenchimentos como "00000000000000" viram None."""
+    v = limpa(valor)
+    # chave real tem no máximo ~12 zeros seguidos (ex.: CNPJ do Banco do Brasil)
+    if not v or len(set(v)) == 1 or re.search(r"0{16,}", v):
+        return None
+    return v
+
+
+# Frases com que o modelo às vezes "lista" um não-indício
+_NAO_INDICIO = re.compile(r"n[ãa]o (é|há|ha|foram?) (um )?ind[íi]cio|sem ind[íi]cios|não há rasura", re.I)
 
 
 def _similar(a: str | None, b: str | None) -> float:
@@ -127,8 +147,8 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     r.dados["extraido"] = ext
 
     emit = ext.get("emitente") or {}
-    cnpj = limpa(emit.get("cnpj")) or None
-    cpf = limpa(emit.get("cpf")) or None
+    cnpj = _lido(emit.get("cnpj"))
+    cpf = _lido(emit.get("cpf"))
     total = para_float(ext.get("total"))
     data_em = para_data(ext.get("data_emissao"))
     # "Nº 000.012.345" (DANFE) → "12345", para comparar com a chave e com o histórico
@@ -137,7 +157,14 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
 
     # chave: QR > texto do PDF > leitura do modelo
     chave_pdf = acha_chave(doc.texto_pdf)
-    chave_llm = limpa(ext.get("chave_acesso")) or None
+    # O modelo às vezes devolve o link do QR Code no lugar da chave: extrai a chave do link.
+    chave_bruta = str(ext.get("chave_acesso") or "")
+    if fx.eh_url(chave_bruta):
+        chave_llm = fx.chave_do_qr(chave_bruta) or acha_chave(chave_bruta)
+        if fx.eh_url_consulta(chave_bruta):
+            r.links_consulta.append(chave_bruta.strip())
+    else:
+        chave_llm = _lido(chave_bruta)
     chave = chave_qr or chave_pdf or chave_llm
 
     if ext.get("legibilidade") == "ruim":
@@ -186,11 +213,15 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     # Chave de acesso
     if chave:
         pc = parse_chave(chave)
-        if not pc:
+        fonte = "QR Code" if chave == chave_qr else ("texto do PDF" if chave == chave_pdf else "leitura da IA")
+        if not pc and fonte == "leitura da IA":
+            # leitura parcial pela IA (foto/scan) não é prova de adulteração
+            r.add("Chave de acesso", "alerta", f"Chave lida pela IA com {len(chave)} posições (esperado: 44): "
+                  "confira a chave impressa manualmente.", 10)
+        elif not pc:
             r.add("Chave de acesso", "falha", f"Chave de acesso com tamanho inválido ({len(chave)} posições).", 30)
         else:
             r.dados["chave"] = pc
-            fonte = "QR Code" if chave == chave_qr else ("texto do PDF" if chave == chave_pdf else "leitura da IA")
             if pc["dv_ok"]:
                 r.add("Chave de acesso", "ok", f"Chave válida ({pc['modelo']}, {pc['uf']}, {pc['ano_mes']}), lida via {fonte}.")
             else:
@@ -253,21 +284,36 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         r.add("Datas", "alerta", "Data de emissão não identificada.", 15)
 
     # Sinais visuais apontados pelo modelo
-    pesos_g = {"baixa": 5, "media": 10, "alta": 20}
+    # "baixa" é só observação (o modelo de 4B gera muito ruído aí); média/alta somam até 35.
+    pesos_g = {"media": 10, "alta": 20}
     acumulado = 0
     for s in ext.get("sinais_suspeitos") or []:
-        p = min(pesos_g.get(s.get("gravidade"), 5), 35 - acumulado)
+        if _NAO_INDICIO.search(s.get("descricao") or ""):
+            continue
+        grav = s.get("gravidade")
+        texto = f"[{grav}] {s.get('descricao')}"
+        if grav not in pesos_g:
+            r.add("Análise visual (IA)", "info", texto)
+            continue
+        p = min(pesos_g[grav], 35 - acumulado)
         acumulado += p
-        r.add("Análise visual (IA)", "alerta", f"[{s.get('gravidade')}] {s.get('descricao')}", max(p, 0))
+        r.add("Análise visual (IA)", "alerta", texto, p)
 
     # ---------- 4. Duplicidade ----------
     dups = historico.buscar_duplicados(doc.sha256, ph, chave, cnpj, numero,
                                        f"{data_em:%Y-%m-%d}" if data_em else None, total)
-    for d in dups:
+    if dups:
+        # Uma única checagem, por mais registros que batam: o mais antigo em detalhe, os demais por número.
+        d = dups[0]
         quem = f" por '{d['colaborador']}'" if d["colaborador"] else ""
-        r.add("Duplicidade", "falha", f"Possível duplicata do reembolso #{d['id']} ({d['motivo']}), "
-              f"enviado em {d['em']}{quem}.", 60)
-    if not dups:
+        texto = (f"Possível duplicata do reembolso #{d['id']} ({d['motivo']}), "
+                 f"enviado em {d['em'].replace('T', ' ')}{quem}.")
+        if len(dups) > 1:
+            outros = ", ".join(f"#{x['id']}" for x in dups[1:6]) + (" …" if len(dups) > 6 else "")
+            texto += f" Também coincide com {len(dups) - 1} outro(s): {outros}."
+        r.dados["duplicatas"] = dups
+        r.add("Duplicidade", "falha", texto, 60)
+    else:
         r.add("Duplicidade", "ok", "Nenhum reembolso semelhante no histórico.")
 
     # ---------- 5. Score ----------

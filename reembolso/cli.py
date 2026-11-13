@@ -34,9 +34,7 @@ def main():
         print(f"Erro: {e}", file=sys.stderr)
         return 1
     if a.json:
-        print(json.dumps({"score": r.score, "nivel": r.nivel, "recomendacao": r.recomendacao,
-                          "checagens": [c.__dict__ for c in r.checagens], "dados": r.dados},
-                         ensure_ascii=False, indent=2, default=str))
+        print(json.dumps(r.para_dict(), ensure_ascii=False, indent=2, default=str))
         return 0
     print(f"\nRISCO {r.nivel.upper()} — {r.score}/100 — {r.recomendacao}\n")
     for c in r.checagens:

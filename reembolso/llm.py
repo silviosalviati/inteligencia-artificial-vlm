@@ -15,7 +15,15 @@ MAX_TEXTO_PDF = int(os.environ.get("REEMBOLSO_MAX_TEXTO_PDF", "3000"))
 LADO_MAX = int(os.environ.get("REEMBOLSO_IMG_LADO", "1024"))
 
 _num = {"type": ["number", "null"]}
-_str = {"type": ["string", "null"]}
+
+
+def _txt(n: int = 80, **extra) -> dict:
+    # maxLength é imposto pela gramática do llama.cpp: se o modelo entrar em repetição
+    # (ex.: endereço repetido até o limite de tokens), o campo é cortado e o JSON fecha.
+    return {"type": ["string", "null"], "maxLength": n, **extra}
+
+
+_str = _txt()
 
 SCHEMA = {
     "type": "object",
@@ -27,28 +35,29 @@ SCHEMA = {
         },
         "emitente": {
             "type": "object",
-            "properties": {"razao_social": _str, "nome_fantasia": _str, "cnpj": _str,
-                           "cpf": _str, "endereco": _str, "cidade": _str, "uf": _str},
+            "properties": {"razao_social": _txt(120), "nome_fantasia": _txt(120), "cnpj": _str,
+                           "cpf": _str, "endereco": _txt(160), "cidade": _str, "uf": _txt(2)},
             "required": ["razao_social", "cnpj", "cpf", "cidade", "uf"],
         },
         "destinatario": {
             "type": "object",
-            "properties": {"nome": _str, "cpf_cnpj": _str},
+            "properties": {"nome": _txt(120), "cpf_cnpj": _str},
             "required": ["nome", "cpf_cnpj"],
         },
         "numero_documento": _str,
         "serie": _str,
-        "data_emissao": {**_str, "description": "DD/MM/AAAA"},
+        "data_emissao": _txt(10, description="DD/MM/AAAA"),
         "hora_emissao": _str,
-        "chave_acesso": {**_str, "description": "44 dígitos, sem espaços"},
+        "chave_acesso": _txt(60, description="44 dígitos, sem espaços (não o link do QR Code)"),
         "itens": {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"descricao": {"type": "string"}, "quantidade": _num,
+                "properties": {"descricao": {"type": "string", "maxLength": 120}, "quantidade": _num,
                                "valor_unitario": _num, "valor_total": _num},
                 "required": ["descricao", "valor_total"],
             },
+            "maxItems": 60,
         },
         "subtotal": _num,
         "desconto": _num,
@@ -60,12 +69,13 @@ SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"descricao": {"type": "string"},
+                "properties": {"descricao": {"type": "string", "maxLength": 200},
                                "gravidade": {"type": "string", "enum": ["baixa", "media", "alta"]}},
                 "required": ["descricao", "gravidade"],
             },
+            "maxItems": 6,
         },
-        "observacoes": _str,
+        "observacoes": _txt(300),
     },
     "required": ["tipo_documento", "emitente", "destinatario", "data_emissao", "chave_acesso",
                  "itens", "total", "legibilidade", "sinais_suspeitos"],
@@ -87,6 +97,9 @@ TAREFA 2 — AUDITORIA VISUAL: liste em "sinais_suspeitos" apenas indícios CONC
 - recibo genérico (modelo de papelaria) sem CNPJ/CPF, sem assinatura ou com dados vagos;
 - aparência de documento gerado digitalmente/por IA (texto sem sentido, logotipos deformados).
 Se não houver indícios, retorne lista vazia. Não especule sem evidência visual.
+NÃO são indícios (não liste): dobras, manchas, amassados ou desgaste do papel; foto torta ou com
+sombra; nome de estabelecimento "genérico"; somas e datas que conferem; pagamento em data posterior
+à emissão (isso é normal). Gravidade "alta" só para sinal claro de adulteração.
 {extra}
 Responda somente com o JSON no esquema pedido."""
 
@@ -132,7 +145,9 @@ def analisar_imagem(paginas: list[Image.Image], texto_pdf: str = "") -> dict:
         timeout=(10, TIMEOUT),
     )
     resp.raise_for_status()
-    partes, tempos = [], {}
+    # text/event-stream sem charset: o requests assumiria ISO-8859-1 e corromperia os acentos.
+    resp.encoding = "utf-8"
+    partes, tempos, motivo_fim = [], {}, None
     for linha in resp.iter_lines(decode_unicode=True):
         if not linha or not linha.startswith("data: ") or linha == "data: [DONE]":
             continue
@@ -141,8 +156,12 @@ def analisar_imagem(paginas: list[Image.Image], texto_pdf: str = "") -> dict:
             raise RuntimeError(f"servidor do modelo retornou erro: {ev['error']}")
         for ch in ev.get("choices") or []:
             partes.append((ch.get("delta") or {}).get("content") or "")
+            motivo_fim = ch.get("finish_reason") or motivo_fim
         tempos = ev.get("timings") or tempos
     texto = "".join(partes)
+    if motivo_fim == "length":
+        raise ValueError("o modelo atingiu o limite de tokens sem concluir a resposta "
+                         "(provável repetição). Tente reenviar o documento.")
     inicio, fim = texto.find("{"), texto.rfind("}")
     if inicio < 0 or fim < inicio:
         raise ValueError(f"resposta do modelo sem JSON: {texto[:200]!r}")

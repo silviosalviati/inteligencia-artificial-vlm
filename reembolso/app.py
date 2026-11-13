@@ -8,11 +8,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import gradio as gr
+from gradio.data_classes import FileData
 
 from . import forensics as fx
 from . import llm
 from .pipeline import Politica, analisar
-from .validators import brl
+from .validators import brl, para_float
 
 UI = Path(__file__).parent / "ui"
 CSS = (UI / "estilo.css").read_text(encoding="utf-8")
@@ -46,10 +47,6 @@ LOGO = """<svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
 <path d="M32.4 31.4l3.6 3.6" stroke="var(--ra-surface)" stroke-width="2.6" stroke-linecap="round"/>
 </svg>"""
 
-ICONE_RELOGIO = ("<svg width='15' height='15' viewBox='0 0 16 16' aria-hidden='true'><circle cx='8' cy='8' r='6.5' "
-                 "fill='none' stroke='currentColor' stroke-width='1.5'/><path d='M8 4.5V8l2.5 1.5' fill='none' "
-                 "stroke='currentColor' stroke-width='1.5' stroke-linecap='round'/></svg>")
-
 RECIBO = """<svg width="92" height="116" viewBox="0 0 92 116" aria-hidden="true">
 <path d="M8 4h76v104l-9.5-6-9.5 6-9.5-6-9.5 6-9.5-6-9.5 6-9.5-6z" fill="var(--ra-surface-2)" stroke="var(--ra-line-strong)" stroke-width="2" stroke-linejoin="round"/>
 <g stroke="var(--ra-line-strong)" stroke-width="3" stroke-linecap="round">
@@ -59,13 +56,11 @@ RECIBO = """<svg width="92" height="116" viewBox="0 0 92 116" aria-hidden="true"
 
 def _topo(online: bool | None = None) -> str:
     online = llm.disponivel() if online is None else online
-    if online:
-        status = ("<div class='ra-status on' role='status'><span class='ra-ponto'></span>"
-                  "<div>Modelo de visão conectado<small>Extração por IA disponível</small></div></div>")
-    else:
-        status = ("<div class='ra-status off' role='status'><span class='ra-ponto'></span>"
-                  "<div>Modelo de visão offline<small>Inicie o modelo com <code>python main.py</code></small>"
-                  "</div></div>")
+    # Com o modelo no ar não há o que mostrar; fora do ar, o aviso explica por que a análise sai incompleta.
+    status = "" if online else (
+        "<div class='ra-status off' role='status'><span class='ra-ponto'></span>"
+        "<div>Modelo de visão fora do ar<small>A análise sai incompleta. Inicie com <code>python main.py</code>"
+        "</small></div></div>")
     return (f"<header class='ra-topo'><div class='ra-marca'>{LOGO}<div><h1>Auditoria de Reembolsos</h1>"
             "<p>Análise de risco de fraude em comprovantes"
             "<span class='ra-local' title='Nenhum dado do comprovante sai desta máquina'>● 100% local</span></p>"
@@ -74,15 +69,17 @@ def _topo(online: bool | None = None) -> str:
 
 def _vazio() -> str:
     chips = "".join(f"<span>{c}</span>" for c in (
-        "CNPJ e Receita Federal", "Chave de acesso e QR Code", "Soma dos itens", "Limite e prazo da política",
-        "Datas", "Duplicidade no histórico", "Metadados do arquivo", "Forense de imagem (ELA)"))
-    return (f"<section class='ra-estado'>{RECIBO}<h2>Nenhum comprovante analisado ainda</h2>"
-            "<p>Envie a foto ou o PDF de um comprovante (NFC-e, DANFE, cupom SAT, recibo) para receber "
-            "o score de risco, as checagens e os dados extraídos.</p>"
+        "CNPJ na Receita Federal", "Chave de acesso e QR Code", "Soma dos itens", "Limite e prazo",
+        "Datas", "Duplicidade", "Metadados do arquivo", "Forense de imagem (ELA)"))
+    return ("<section class='ra-estado vazio'>"
+            "<div class='ra-estado-cab'><span class='ra-seta' aria-hidden='true'>←</span><div>"
+            "<h2>Comece pelo comprovante</h2>"
+            "<p>Solte a foto ou o PDF no painel <b>Documento</b>. O laudo de risco aparece aqui, "
+            "ao lado do documento, para você conferir um contra o outro.</p></div></div>"
             "<ol class='ra-passos'>"
-            "<li><strong>Envie o comprovante</strong>Foto do celular, print ou PDF.</li>"
-            "<li><strong>Identifique o pedido</strong>Colaborador e valor solicitado.</li>"
-            "<li><strong>Clique em Analisar</strong>Leva de 1 a 4 minutos em CPU.</li></ol>"
+            "<li><strong>Envie o comprovante</strong>NFC-e, DANFE, cupom SAT, recibo — foto, print ou PDF.</li>"
+            "<li><strong>Identifique o pedido</strong>Colaborador e valor solicitado, na barra acima.</li>"
+            "<li><strong>Analise</strong>Score de 0 a 100, checagens e dados extraídos.</li></ol>"
             "<div class='ra-verifica'><span class='ra-rotulo'>O que é verificado</span>"
             f"<div class='ra-chips'>{chips}</div></div></section>")
 
@@ -97,12 +94,12 @@ def _carregando(online: bool) -> str:
     return (f"<section class='ra-estado carregando' aria-busy='true' aria-live='polite'>"
             f"<div class='ra-scan'>{RECIBO}<span class='ra-feixe'></span></div>"
             "<h2>Analisando o comprovante…</h2>"
-            "<p>Em CPU, a análise com IA leva de <b>1 a 4 minutos</b>. Você pode continuar com esta aba aberta; "
-            "o resultado aparece aqui automaticamente.</p>"
+            "<p>Com GPU leva alguns segundos; só em CPU, de <b>1 a 4 minutos</b>. "
+            "O resultado aparece aqui automaticamente.</p>"
             "<div class='ra-barra'><i></i></div>"
             "<div class='ra-tempo'><div><span>Decorrido</span>"
             f"<strong data-ra-inicio='{inicio}'>00:00</strong></div>"
-            "<div><span>Estimativa</span><strong>1–4 min</strong></div></div>"
+            "<div><span>Estimativa</span><strong>&lt; 4 min</strong></div></div>"
             f"<ul class='ra-etapas'>{etapas}</ul>{aviso}</section>")
 
 
@@ -137,15 +134,17 @@ def _medidor(score: int) -> str:
             f"<path class='zona-a' d='{arco}' pathLength='100' fill='none' stroke-width='16' "
             "stroke-dasharray='0 50 50 100'/>"
             f"<path class='valor' d='{arco}' pathLength='100' fill='none' stroke-width='16' "
-            f"stroke-dasharray='{max(score, 0.6):g} 100'/>{marcas}</svg>"
-            f"<div class='ra-score'><strong>{score}</strong><span>/100</span><em>score de risco</em></div></div>")
+            f"stroke-dasharray='{max(score, 0.6):g} 100'/>{marcas}"
+            f"<text class='num' x='100' y='90' text-anchor='middle' style='font-size:48px'>{score}</text>"
+            "<text class='rot' x='100' y='106' text-anchor='middle' style='font-size:7.5px'>SCORE DE RISCO</text>"
+            "</svg></div>")
 
 
 def _laudo(r, colaborador: str, valor_solicitado) -> str:
     cont = {s: sum(c.status == s for c in r.checagens) for s in ORDEM}
     contagem = "".join(
-        f"<div class='ra-cont st-{s}{' zero' if not cont[s] else ''}'><strong>{cont[s]}</strong>"
-        f"<span>{STATUS[s][0]}</span></div>" for s in ORDEM)
+        f"<div class='ra-cont st-{s}{' zero' if not cont[s] else ''}'><span class='ic' aria-hidden='true'>"
+        f"{STATUS[s][1]}</span><strong>{cont[s]}</strong><span>{STATUS[s][0]}</span></div>" for s in ORDEM)
     nome = (r.dados.get("arquivo") or {}).get("nome")
     meta = []
     if nome:
@@ -160,11 +159,11 @@ def _laudo(r, colaborador: str, valor_solicitado) -> str:
     if r.erro_llm:
         banner = (f"<div class='ra-banner'><b>Extração por IA indisponível.</b> {_e(r.erro_llm)} "
                   "Os dados do documento não foram lidos nem conferidos; reanalise com o modelo conectado.</div>")
-    return (f"<section class='ra-laudo {r.nivel}'>{_medidor(r.score)}<div class='ra-veredito'>"
-            f"<span class='ra-carimbo'>{NIVEIS[r.nivel]}</span>"
+    return (f"<section class='ra-laudo {r.nivel}'><div class='ra-laudo-topo'>{_medidor(r.score)}"
+            f"<div class='ra-veredito'><span class='ra-carimbo'>{NIVEIS[r.nivel]}</span>"
             f"<p class='ra-recomendacao'>{_e(r.recomendacao)}</p>"
-            f"<div class='ra-meta'>{''.join(meta)}</div>"
-            f"<div class='ra-contagem'>{contagem}</div></div>{banner}</section>")
+            f"<div class='ra-meta'>{''.join(meta)}</div></div></div>"
+            f"{banner}<div class='ra-contagem'>{contagem}</div></section>")
 
 
 def _checagens(checagens) -> str:
@@ -257,7 +256,11 @@ def _executar(arquivo, colaborador, valor_solicitado, valor_maximo, prazo, onlin
         prazo_dias=int(prazo) if prazo else padrao.prazo_dias,
         online=online, registrar=registrar)
     colaborador = (colaborador or "").strip()
-    valor_solicitado = valor_solicitado if valor_solicitado else None
+    texto_valor = str(valor_solicitado or "").strip()
+    valor_solicitado = para_float(texto_valor) if texto_valor else None
+    if texto_valor and valor_solicitado is None:
+        raise gr.Error(f"Valor solicitado inválido: '{texto_valor}'. Use, por exemplo, 123,45.")
+    valor_solicitado = valor_solicitado or None
     try:
         r = analisar(arquivo, pol, colaborador=colaborador, valor_solicitado=valor_solicitado)
     except ValueError as e:  # arquivo vazio, corrompido, protegido por senha...
@@ -296,8 +299,36 @@ def _finalizar(ok, arquivo):
 
 
 def _nova_analise():
-    return (None, "", None, gr.Image(value=None, visible=False), gr.HTML(value=_vazio(), visible=True),
+    return (None, "", "", gr.Image(value=None, visible=False), gr.HTML(value=_vazio(), visible=True),
             gr.Column(visible=False), "", "", "", None, None, False)
+
+
+RODAPE = """<footer class='ra-rodape'>
+<details><summary>Usar via API</summary><div class='ra-rodape-corpo'>
+<p><b>Para quê:</b> integrar outro sistema (ERP, fluxo de aprovação, planilha) e analisar comprovantes
+sem abrir esta tela. Funciona só nesta máquina (<code>127.0.0.1</code>), com a aplicação rodando.</p>
+<p><b>Como:</b> instale o cliente uma vez (<code>pip install gradio_client</code>) e chame <code>/analisar</code>:</p>
+<pre><code>from gradio_client import Client, handle_file
+
+cliente = Client("http://127.0.0.1:7860/")
+r = cliente.predict(handle_file("comprovante.pdf"), "Maria Souza", 123.45,
+                    api_name="/analisar")
+print(r["score"], r["nivel"], r["recomendacao"])</code></pre>
+<p>Parâmetros, nesta ordem: arquivo, colaborador, valor solicitado e, opcionais, limite (1000), prazo em dias (90),
+consultar CNPJ (<code>True</code>) e registrar no histórico (<code>True</code>). A resposta é um JSON com score,
+nível, recomendação, checagens e dados extraídos. Sem programar, use o terminal:
+<code>python -m reembolso.cli comprovante.pdf --json</code>.</p>
+</div></details>
+<details><summary>Configurações</summary><div class='ra-rodape-corpo'>
+<p><b>Política de reembolso</b> (limite, prazo, consulta de CNPJ, histórico): clique em <i>Política de
+reembolso</i>, na barra do pedido. Vale a partir da próxima análise.</p>
+<p><b>Tema da tela:</b>
+<span class='ra-temas' role='group' aria-label='Tema'>
+<button type='button' data-ra-tema='claro'>Claro</button><button type='button' data-ra-tema='escuro'>Escuro</button><button type='button' data-ra-tema='auto'>Automático</button></span></p>
+<p><b>Modelo de IA:</b> definido ao iniciar. <code>python main.py --gpu-layers 0</code> usa só a CPU;
+<code>--ctx 4096</code> economiza memória. Detalhes no README.</p>
+</div></details>
+</footer>"""
 
 
 # ---------------------------------------------------------------- tema
@@ -324,63 +355,92 @@ TEMA = gr.themes.Base(
 )
 
 
-# ---------------------------------------------------------------- layout
-with gr.Blocks(title="Auditoria de Reembolsos", analytics_enabled=False) as demo:
-    topo = gr.HTML(_topo(False), elem_id="ra-topo")
-    with gr.Row(equal_height=False):
-        with gr.Column(scale=4, min_width=320, elem_id="ra-entrada"):
-            gr.HTML("<div class='ra-secao'><b>1</b>Comprovante</div>")
-            arquivo = gr.File(label="Imagem ou PDF do comprovante", type="filepath",
-                              file_types=["image", ".pdf"])
-            previa = gr.Image(label="Prévia do documento", type="pil", interactive=False, visible=False,
-                              elem_id="ra-previa", height=360, buttons=["fullscreen"])
-            gr.HTML("<div class='ra-secao'><b>2</b>Pedido de reembolso</div>")
-            colaborador = gr.Textbox(label="Colaborador (matrícula ou nome)", placeholder="Ex.: 10234 ou Maria Souza")
-            valor_sol = gr.Number(label="Valor solicitado (R$)", value=None, minimum=0, placeholder="0,00")
-            with gr.Accordion("Política de reembolso", open=False):
-                valor_max = gr.Number(label="Limite por reembolso (R$)", value=1000, minimum=0)
-                prazo = gr.Number(label="Prazo máximo (dias desde a emissão)", value=90, minimum=0, precision=0)
-                online = gr.Checkbox(label="Consultar CNPJ na Receita (BrasilAPI)", value=True,
-                                     info="Envia apenas o CNPJ do emitente; nenhum dado do colaborador sai da máquina.")
-                registrar = gr.Checkbox(label="Registrar no histórico (detecção de duplicidade)", value=True)
-            with gr.Row(elem_id="ra-botoes"):
-                botao = gr.Button("Analisar comprovante", variant="primary", size="lg", scale=3, elem_id="ra-analisar")
-                novo = gr.Button("Nova análise", variant="secondary", size="lg", scale=2, elem_id="ra-nova")
-            gr.HTML(f"<p class='ra-dica'>{ICONE_RELOGIO}<span>Em CPU, a análise com IA leva de 1 a 4 minutos. "
-                    "O botão fica bloqueado até o resultado sair.</span></p>")
+# ---------------------------------------------------------------- API
+def analisar_api(arquivo: FileData, colaborador: str = "", valor_solicitado: float | None = None,
+                 limite: float = 1000, prazo_dias: int = 90, consultar_cnpj: bool = True,
+                 registrar: bool = True) -> dict:
+    """Analisa um comprovante (imagem ou PDF) e devolve score, nível, checagens e dados extraídos."""
+    caminho = arquivo.path if isinstance(arquivo, FileData) else (arquivo or {}).get("path", arquivo)
+    pol = Politica(valor_maximo=limite, prazo_dias=int(prazo_dias), online=consultar_cnpj, registrar=registrar)
+    try:
+        r = analisar(caminho, pol, colaborador=(colaborador or "").strip(),
+                     valor_solicitado=valor_solicitado or None)
+    except ValueError as e:
+        raise gr.Error(str(e)) from e
+    return r.para_dict()
 
-        with gr.Column(scale=7, min_width=360):
-            estado = gr.HTML(_vazio(), elem_id="ra-estado")
-            with gr.Column(visible=False) as resultados:
-                cabecalho = gr.HTML(elem_id="ra-laudo")
+
+# ---------------------------------------------------------------- layout
+# "Mesa de auditoria": o documento (a evidência) fica fixo à esquerda; à direita, de cima para
+# baixo, o pedido (barra de ação), o veredito e os detalhes — lidos lado a lado com o documento.
+with gr.Blocks(title="Auditoria de Reembolsos", analytics_enabled=False) as demo:
+    topo = gr.HTML(_topo(True), elem_id="ra-topo", padding=False, container=False)
+    with gr.Row(equal_height=False, elem_id="ra-mesa"):
+        with gr.Column(scale=5, min_width=320, elem_id="ra-doc"):
+            gr.HTML("<div class='ra-painel-tit'><span>Documento</span><small>foto, print ou PDF</small></div>",
+                    padding=False, container=False)
+            arquivo = gr.File(label="Comprovante", show_label=False, type="filepath",
+                              file_types=["image", ".pdf"], elem_id="ra-upload")
+            previa = gr.Image(label="Prévia do documento", show_label=False, type="pil", interactive=False,
+                              visible=False, elem_id="ra-previa", height=640, buttons=["fullscreen"])
+
+        with gr.Column(scale=7, min_width=360, elem_id="ra-analise"):
+            with gr.Column(elem_id="ra-pedido"):
+                with gr.Row(elem_id="ra-pedido-linha", equal_height=False):
+                    colaborador = gr.Textbox(label="Colaborador", placeholder="Matrícula ou nome",
+                                             scale=3, min_width=160)
+                    valor_sol = gr.Textbox(label="Valor solicitado", placeholder="R$ 0,00",
+                                           scale=2, min_width=120, elem_id="ra-valor")
+                    with gr.Row(elem_id="ra-acoes"):  # os dois botões andam sempre juntos
+                        botao = gr.Button("Analisar comprovante", variant="primary", size="lg",
+                                          min_width=180, elem_id="ra-analisar")
+                        novo = gr.Button("Nova análise", variant="secondary", size="lg",
+                                         min_width=120, elem_id="ra-nova")
+                with gr.Accordion("Política de reembolso", open=False, elem_id="ra-politica"):
+                    with gr.Row():
+                        valor_max = gr.Number(label="Limite por reembolso (R$)", value=1000, minimum=0,
+                                              min_width=150)
+                        prazo = gr.Number(label="Prazo máximo (dias)", value=90, minimum=0, precision=0,
+                                          min_width=150)
+                    with gr.Row():
+                        online = gr.Checkbox(label="Consultar CNPJ na Receita (BrasilAPI)", value=True,
+                                             info="Envia só o CNPJ do emitente; nada do colaborador sai da máquina.")
+                        registrar = gr.Checkbox(label="Registrar no histórico", value=True,
+                                                info="Necessário para detectar reembolsos duplicados.")
+
+            estado = gr.HTML(_vazio(), elem_id="ra-estado", padding=False, container=False)
+            with gr.Column(visible=False, elem_id="ra-resultados") as resultados:
+                cabecalho = gr.HTML(elem_id="ra-laudo", padding=False, container=False)
                 with gr.Tabs(elem_id="ra-abas"):
                     with gr.Tab("Checagens"):
-                        checks = gr.HTML(elem_id="ra-checagens")
+                        checks = gr.HTML(elem_id="ra-checagens", padding=False, container=False)
                     with gr.Tab("Dados extraídos"):
-                        resumo = gr.HTML(elem_id="ra-dados")
-                    with gr.Tab("Mapa forense (ELA)"):
-                        gr.HTML("<p class='ra-ela-legenda'>O ELA (Error Level Analysis) realça diferenças de "
+                        resumo = gr.HTML(elem_id="ra-dados", padding=False, container=False)
+                    with gr.Tab("Forense (ELA)"):
+                        gr.HTML(padding=False, container=False, value="<p class='ra-ela-legenda'>O ELA (Error Level Analysis) realça diferenças de "
                                 "compressão. Áreas claras <b>isoladas</b> sobre valores, datas ou nomes indicam "
                                 "possível edição; brilho uniforme em textos e bordas é normal.</p>")
-                        ela = gr.Image(label="Áreas claras isoladas = recompressão diferente", type="pil",
+                        ela = gr.Image(label="Mapa ELA", show_label=False, type="pil",
                                        interactive=False, buttons=["download", "fullscreen"])
-                    with gr.Tab("JSON completo"):
-                        bruto = gr.JSON(label="Dados completos da análise")
+                    with gr.Tab("JSON"):
+                        bruto = gr.JSON(label="Dados completos da análise", show_label=False)
 
+    gr.HTML(RODAPE, padding=False, container=False, elem_id="ra-rodape")
     ok = gr.State(False)
 
-    demo.load(_status_llm, outputs=topo, show_progress="hidden")
-    gr.Timer(30).tick(_status_llm, outputs=topo, show_progress="hidden", concurrency_id="status",
-                      concurrency_limit=None)
-    arquivo.change(_previa, arquivo, previa, show_progress="minimal", concurrency_id="previa",
-                   concurrency_limit=None)
-
-    botao.click(_iniciar, outputs=[botao, novo, topo, estado, resultados, ok], show_progress="hidden").then(
+    # Eventos internos da tela não aparecem na API; o endpoint público é só /analisar.
+    interno = {"api_visibility": "private", "show_progress": "hidden"}
+    demo.load(_status_llm, outputs=topo, **interno)
+    gr.Timer(30).tick(_status_llm, outputs=topo, concurrency_id="status", concurrency_limit=None, **interno)
+    arquivo.change(_previa, arquivo, previa, concurrency_id="previa", concurrency_limit=None,
+                   api_visibility="private", show_progress="minimal")
+    botao.click(_iniciar, outputs=[botao, novo, topo, estado, resultados, ok], **interno).then(
         _executar, [arquivo, colaborador, valor_sol, valor_max, prazo, online, registrar],
-        [cabecalho, resumo, checks, ela, bruto, ok], show_progress="hidden").then(
-        _finalizar, [ok, arquivo], [botao, novo, estado, resultados], show_progress="hidden")
+        [cabecalho, resumo, checks, ela, bruto, ok], **interno).then(
+        _finalizar, [ok, arquivo], [botao, novo, estado, resultados], **interno)
     novo.click(_nova_analise, outputs=[arquivo, colaborador, valor_sol, previa, estado, resultados,
-                                       cabecalho, resumo, checks, ela, bruto, ok], show_progress="hidden")
+                                       cabecalho, resumo, checks, ela, bruto, ok], **interno)
+    gr.api(analisar_api, api_name="analisar")
 
 
 # Força os textos nativos do Gradio (upload, botões, mensagens) em pt-BR,
@@ -394,7 +454,7 @@ document.documentElement.lang = "pt-BR";
 
 
 def main():
-    demo.queue().launch(server_name="127.0.0.1", server_port=7860, theme=TEMA, css=CSS, footer_links=["api", "settings"],
+    demo.queue().launch(server_name="127.0.0.1", server_port=7860, theme=TEMA, css=CSS, footer_links=[],
                         head=FORCAR_PT_BR + f"<script>{JS}</script>")
 
 

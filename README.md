@@ -78,6 +78,22 @@ rodando, o `main.py` os reaproveita em vez de abrir outra cópia.
 | `--so-modelo` | Sobe só o modelo (útil para usar a linha de comando) |
 | outras | Repassadas ao `llama-server` (ex.: `--flash-attn on`) |
 
+### Usar via API (integração com outros sistemas)
+
+Com a aplicação rodando, outro programa desta máquina pode analisar comprovantes pelo endpoint `/analisar`,
+que devolve JSON com score, nível, recomendação, checagens e dados extraídos:
+
+```python
+from gradio_client import Client, handle_file   # pip install gradio_client
+
+cliente = Client("http://127.0.0.1:7860/")
+r = cliente.predict(handle_file("comprovante.pdf"), "Maria Souza", 123.45, api_name="/analisar")
+print(r["score"], r["nivel"], r["recomendacao"])
+```
+
+Parâmetros: arquivo, colaborador, valor solicitado e, opcionais, limite (1000), prazo em dias (90),
+consultar CNPJ (`True`) e registrar no histórico (`True`). As mesmas instruções aparecem no rodapé da interface.
+
 ### Linha de comando (opcional)
 
 Com o modelo no ar (`python main.py --so-modelo` em outro terminal), analise qualquer arquivo:
