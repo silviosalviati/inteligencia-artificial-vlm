@@ -48,7 +48,7 @@ def _executar(arquivo, colaborador, valor_solicitado, valor_maximo, prazo, onlin
 
 def _status_llm():
     return ("🟢 Modelo de visão conectado." if llm.disponivel()
-            else "🔴 Modelo de visão OFFLINE — rode `./start_llm.sh` em outro terminal.")
+            else "🔴 Modelo de visão OFFLINE — rode `python start_llm.py` em outro terminal.")
 
 
 with gr.Blocks(title="Análise de Reembolso") as demo:

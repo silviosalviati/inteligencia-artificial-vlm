@@ -10,5 +10,6 @@ bin/
 
 # Dados sensíveis: recibos reais e histórico de reembolsos
 recibos/
+arquivos/
 dados/
 *.sqlite
