@@ -9,6 +9,8 @@ bin/
 *.gguf
 
 # Dados sensíveis: recibos reais e histórico de reembolsos
+# Instruções Normativas (documentos de divulgação interna). A memória extraída fica em normas/.
+INs/
 recibos/
 arquivos/
 dados/

@@ -8,17 +8,18 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 
 from . import forensics as fx
-from . import historico, llm, online
+from . import historico, llm, normas, online
 from .validators import (acha_chave, brl, limpa, para_data, para_float, parse_chave,
                          valida_cnpj, valida_cpf)
 
 
 @dataclass
 class Politica:
-    valor_maximo: float = 1000.0
-    prazo_dias: int = 90
+    valor_maximo: float | None = None   # limite interno opcional (a IN 001-004 não fixa teto)
+    prazo_dias: int | None = None       # None = prazo da memória normativa (IN 001-004 §4.3: 360 dias)
     online: bool = True          # consulta CNPJ na BrasilAPI
     registrar: bool = True       # grava no histórico para detectar duplicidade
+    limiar_fraude: int = 50      # score a partir do qual há suspeita de fraude e o pedido é indeferido
 
 
 @dataclass
@@ -41,10 +42,24 @@ class Resultado:
     cnpj_receita: dict | None = None
     erro_llm: str | None = None
     id_historico: int | None = None
+    decisao: str = "pendente"            # "deferido" | "deferido_parcial" | "indeferido" | "pendente"
+    valor_documento: float | None = None
+    valor_glosado: float = 0.0           # itens sem cobertura
+    valor_reembolsavel: float | None = None
+    glosas: list[str] = field(default_factory=list)
+    pagina_corrigida: object = None      # 1ª página endireitada, quando a imagem veio girada
+    motivos: list[str] = field(default_factory=list)      # por que foi indeferido / está pendente
+    exigencias: list[str] = field(default_factory=list)   # condições das normas para o deferimento
+    base_normativa: str = ""
+    avisos_normas: list[str] = field(default_factory=list)
 
     def para_dict(self) -> dict:
         """Resultado em formato JSON (API e linha de comando)."""
-        return {"score": self.score, "nivel": self.nivel, "recomendacao": self.recomendacao,
+        return {"decisao": self.decisao, "valor_reembolsavel": self.valor_reembolsavel,
+                "valor_documento": self.valor_documento, "valor_glosado": self.valor_glosado,
+                "glosas": self.glosas, "motivos": self.motivos, "exigencias": self.exigencias,
+                "base_normativa": self.base_normativa, "avisos_normas": self.avisos_normas,
+                "score": self.score, "nivel": self.nivel, "recomendacao": self.recomendacao,
                 "checagens": [asdict(c) for c in self.checagens], "links_consulta": self.links_consulta,
                 "id_historico": self.id_historico, "dados": self.dados}
 
@@ -72,6 +87,80 @@ def _lido(valor: str | None) -> str | None:
 _NAO_INDICIO = re.compile(r"n[ãa]o (é|há|ha|foram?) (um )?ind[íi]cio|sem ind[íi]cios|não há rasura", re.I)
 
 
+ROTULO_ORIENTACAO = {"de_cabeca_para_baixo": "de cabeça para baixo", "topo_a_direita": "deitada (topo à direita)",
+                     "topo_a_esquerda": "deitada (topo à esquerda)"}
+
+
+def _endireitar(r: Resultado, doc, ext: dict, max_correcoes: int = 2) -> dict:
+    """Se a IA disser que a imagem está girada, endireita as páginas e lê de novo (no máximo 2 vezes)."""
+    giros = []
+    for _ in range(max_correcoes):
+        ori = ext.get("orientacao") or "normal"
+        graus = llm.ORIENTACOES.get(ori, 0)
+        if not graus:
+            break
+        giros.append(ori)
+        doc.paginas = [p.rotate(graus, expand=True) for p in doc.paginas]
+        ext = llm.analisar_imagem(doc.paginas, doc.texto_pdf)
+    if giros:
+        r.pagina_corrigida = doc.paginas[0]
+        ainda = (ext.get("orientacao") or "normal") != "normal"
+        r.add("Documento", "alerta" if ainda else "info",
+              f"A imagem estava {ROTULO_ORIENTACAO.get(giros[0], giros[0])} e foi girada automaticamente para a leitura."
+              + (" Ainda não ficou na posição normal: confira a leitura ou peça outra foto." if ainda else ""))
+        if ainda:
+            ext["legibilidade"] = "ruim"   # leva a decisão para "pendente"
+    return ext
+
+
+def _conferir_soma(r: Resultado, itens: list[dict], total: float, desc: float, acr: float) -> None:
+    """Confere a soma dos itens com o total, tolerando erros típicos de leitura da IA."""
+    tol = max(0.05, total * 0.005)
+
+    def soma(usar_qtd: bool) -> float:
+        s = 0.0
+        for i in itens:
+            v = para_float(i.get("valor_total"))
+            q, u = para_float(i.get("quantidade")), para_float(i.get("valor_unitario"))
+            if usar_qtd and q and u:
+                v = round(q * u, 2)
+            s += v or 0.0
+        return round(s - desc + acr, 2)
+
+    esperado = soma(False)
+    if abs(esperado - total) <= tol:
+        r.add("Valores", "ok", f"Soma dos itens confere com o total ({brl(total)}).")
+        return
+    if abs(soma(True) - total) <= tol:  # Vl.Tot lido errado, mas quantidade × unitário fecha
+        r.add("Valores", "ok", f"Soma dos itens (quantidade × valor unitário) confere com o total ({brl(total)}).")
+        return
+    dif = round(total - esperado, 2)
+    # A diferença é exatamente o valor de um item (ou um múltiplo pequeno)? Então a IA quase certamente
+    # leu a quantidade errado (ex.: "2 UN 93,00 186,00" lido como 93,00). Não é indício de fraude.
+    for i in itens:
+        u = para_float(i.get("valor_unitario")) or para_float(i.get("valor_total"))
+        if u and dif > 0 and any(abs(dif - k * u) <= tol for k in (1, 2, 3)):
+            r.add("Valores", "info", f"Soma dos itens lidos ({brl(esperado)}) fica {brl(dif)} abaixo do total "
+                  f"({brl(total)}), exatamente o valor de \"{str(i.get('descricao') or '').strip()}\": "
+                  "provável quantidade lida errado pela IA. Confira o item na nota.")
+            return
+    r.add("Valores", "alerta", f"Soma dos itens ({brl(esperado)}) ≠ total ({brl(total)}).", 25)
+
+
+# Portais oficiais de consulta (a página pede a chave e um captcha). NFC-e é estadual: só as UFs
+# com endereço conferido entram aqui; para as demais, a tela orienta a usar o portal da SEFAZ da UF.
+PORTAL_NFE = "https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&tipoConteudo=7PhJ+gAVw2g="
+PORTAIS_NFCE = {"SP": "https://www.nfce.fazenda.sp.gov.br/qrcode"}
+
+
+def consulta_sefaz(pc: dict) -> list[str]:
+    if pc.get("modelo") == "NF-e":
+        return [PORTAL_NFE]
+    if pc.get("modelo") == "NFC-e" and pc.get("uf") in PORTAIS_NFCE:
+        return [PORTAIS_NFCE[pc["uf"]]]
+    return []
+
+
 def _similar(a: str | None, b: str | None) -> float:
     a, b = _norm(a), _norm(b)
     if not a or not b:
@@ -90,7 +179,6 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     # ---------- 1. Arquivo, metadados e forense ----------
     doc = fx.carregar(caminho)
     pagina = doc.paginas[0]
-    ph = fx.phash(pagina)
     r.dados["arquivo"] = {"nome": doc.caminho.name, "tipo": doc.tipo, "sha256": doc.sha256,
                           "metadados": doc.metadados}
 
@@ -136,10 +224,13 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     if llm.disponivel():
         try:
             ext = llm.analisar_imagem(doc.paginas, doc.texto_pdf)
+            ext = _endireitar(r, doc, ext)
         except Exception as e:  # noqa: BLE001
             r.erro_llm = f"{type(e).__name__}: {e}"
     else:
         r.erro_llm = "Servidor do modelo não está rodando (python main.py)."
+    # pHash depois da correção de orientação: a mesma nota fotografada de cabeça para baixo é duplicata.
+    ph = fx.phash(doc.paginas[0])
     if r.erro_llm:
         r.add("Extração", "alerta", f"Extração por IA indisponível: {r.erro_llm}", 0)
         if pol.registrar:
@@ -159,16 +250,20 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     chave_pdf = acha_chave(doc.texto_pdf)
     # O modelo às vezes devolve o link do QR Code no lugar da chave: extrai a chave do link.
     chave_bruta = str(ext.get("chave_acesso") or "")
+    # URL lida pela IA NÃO vira link (ela erra letras: "nfce.fezenda..."); os links oficiais são
+    # montados a partir da chave validada (consulta_sefaz) ou vêm do QR Code decodificado.
     if fx.eh_url(chave_bruta):
         chave_llm = fx.chave_do_qr(chave_bruta) or acha_chave(chave_bruta)
-        if fx.eh_url_consulta(chave_bruta):
-            r.links_consulta.append(chave_bruta.strip())
     else:
         chave_llm = _lido(chave_bruta)
     chave = chave_qr or chave_pdf or chave_llm
 
     if ext.get("legibilidade") == "ruim":
         r.add("Extração", "alerta", "Documento pouco legível: peça reenvio de uma imagem melhor.", 10)
+
+    # o modelo às vezes repete o protocolo da SEFAZ no campo do código do cartão
+    if ext.get("autorizacao_pagamento") and limpa(ext.get("autorizacao_pagamento")) == limpa(ext.get("protocolo_autorizacao")):
+        ext["autorizacao_pagamento"] = None
 
     # ---------- 3. Regras determinísticas ----------
     # Emitente
@@ -228,43 +323,42 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
                 peso = 40 if fonte != "leitura da IA" else 15  # IA pode errar um dígito
                 r.add("Chave de acesso", "falha" if peso == 40 else "alerta",
                       f"Dígito verificador da chave NÃO confere (fonte: {fonte}).", peso)
-            if cnpj and valida_cnpj(cnpj) and pc["cnpj_emitente"] != cnpj:
-                r.add("Chave de acesso", "falha", f"CNPJ embutido na chave ({pc['cnpj_emitente']}) ≠ CNPJ impresso ({cnpj}).", 35)
-            if data_em and pc["ano_mes"] != f"{data_em:%Y-%m}":
-                r.add("Chave de acesso", "alerta", f"Mês da chave ({pc['ano_mes']}) ≠ data de emissão ({data_em:%m/%Y}).", 25)
-            if numero and pc["numero"] != numero:
-                r.add("Chave de acesso", "alerta", f"Número na chave ({pc['numero']}) ≠ número impresso ({numero}).", 15)
+            # Conferências cruzadas só com chave confiável: se a IA já errou dígitos da chave (DV inválido),
+            # comparar mês/número/CNPJ com ela gera alarme falso.
+            if pc["dv_ok"] or fonte != "leitura da IA":
+                if cnpj and valida_cnpj(cnpj) and pc["cnpj_emitente"] != cnpj:
+                    r.add("Chave de acesso", "falha", f"CNPJ embutido na chave ({pc['cnpj_emitente']}) ≠ CNPJ impresso ({cnpj}).", 35)
+                if data_em and pc["ano_mes"] != f"{data_em:%Y-%m}":
+                    r.add("Chave de acesso", "alerta", f"Mês da chave ({pc['ano_mes']}) ≠ data de emissão ({data_em:%m/%Y}).", 25)
+                if numero and pc["numero"] != numero:
+                    r.add("Chave de acesso", "alerta", f"Número na chave ({pc['numero']}) ≠ número impresso ({numero}).", 15)
         if chave_qr and chave_llm and len(chave_llm) == 44 and chave_qr != chave_llm:
             dif = sum(a != b for a, b in zip(chave_qr, chave_llm))
             if dif > 3:  # poucas diferenças = provável erro de leitura da IA
                 r.add("Chave de acesso", "falha", "Chave impressa difere da chave do QR Code.", 40)
-        if pc and pc["modelo"] == "NF-e":
-            r.links_consulta.append("https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo")
+        if pc and pc["dv_ok"]:
+            r.links_consulta += consulta_sefaz(pc)
     elif tipo in ("nfce", "nfe_danfe", "cupom_sat"):
         r.add("Chave de acesso", "alerta", "Documento fiscal eletrônico sem chave de acesso legível.", 15)
     elif tipo == "recibo_simples":
         r.add("Chave de acesso", "info", "Recibo simples não tem chave fiscal: validação depende de outras evidências.")
 
     # Valores
-    itens = ext.get("itens") or []
-    soma = sum(v for v in (para_float(i.get("valor_total")) for i in itens) if v is not None)
+    itens = [i for i in (ext.get("itens") or []) if isinstance(i, dict)]
     desc = para_float(ext.get("desconto")) or 0.0
     acr = para_float(ext.get("acrescimo")) or 0.0
     if total is None and ext:
         r.add("Valores", "alerta", "Valor total não identificado.", 15)
-    if total is not None and itens and soma > 0:
-        esperado = round(soma - desc + acr, 2)
-        if abs(esperado - total) <= max(0.05, total * 0.005):
-            r.add("Valores", "ok", f"Soma dos itens confere com o total ({brl(total)}).")
-        else:
-            r.add("Valores", "alerta", f"Soma dos itens ({brl(esperado)}) ≠ total ({brl(total)}).", 25)
+    if total is not None and itens:
+        _conferir_soma(r, itens, total, desc, acr)
+    pago = para_float(ext.get("valor_pago"))
+    if pago is not None and total is not None and pago + 0.01 < total:
+        r.add("Valores", "alerta", f"Valor pago ({brl(pago)}) menor que o total da nota ({brl(total)}).", 10)
     if total is not None:
-        if total > pol.valor_maximo:
+        if pol.valor_maximo and total > pol.valor_maximo:
             r.add("Política", "alerta", f"Valor {brl(total)} acima do limite da política ({brl(pol.valor_maximo)}).", 10)
         if tipo == "recibo_simples" and total >= 50 and total == int(total) and int(total) % 10 == 0:
             r.add("Valores", "alerta", f"Recibo manual com valor redondo ({brl(total)}).", 5)
-        if valor_solicitado is not None and valor_solicitado - total > 0.01:
-            r.add("Política", "falha", f"Valor solicitado ({brl(valor_solicitado)}) é MAIOR que o do documento ({brl(total)}).", 35)
     if doc.texto_pdf.strip() and total is not None:
         alvo = brl(total).replace("R$ ", "")
         if alvo not in doc.texto_pdf and f"{total:.2f}" not in doc.texto_pdf:
@@ -274,10 +368,8 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     if data_em:
         if data_em > hoje:
             r.add("Datas", "falha", f"Data de emissão no futuro ({data_em:%d/%m/%Y}).", 30)
-        elif (hoje - data_em).days > pol.prazo_dias:
-            r.add("Política", "alerta", f"Documento com {(hoje - data_em).days} dias (prazo: {pol.prazo_dias}).", 15)
         else:
-            r.add("Datas", "ok", f"Emitido em {data_em:%d/%m/%Y}, dentro do prazo.")
+            r.add("Datas", "ok", f"Emitido em {data_em:%d/%m/%Y}.")
         if data_em.weekday() >= 5:
             r.add("Datas", "info", f"Emitido em fim de semana ({['sáb', 'dom'][data_em.weekday() - 5]}).")
     elif ext:
@@ -299,7 +391,28 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         acumulado += p
         r.add("Análise visual (IA)", "alerta", texto, p)
 
-    # ---------- 4. Duplicidade ----------
+    # Portal de consulta pelo tipo e UF, mesmo se a chave lida tiver erro de dígito (o portal pede a chave impressa)
+    if not r.links_consulta:
+        uf = (emit.get("uf") or "").upper() or ((r.dados.get("chave") or {}).get("uf") or "")
+        modelo = {"nfce": "NFC-e", "nfe_danfe": "NF-e"}.get(tipo)
+        if modelo:
+            r.links_consulta += consulta_sefaz({"modelo": modelo, "uf": uf})
+
+    # ---------- 4. Normas (memória das Instruções Normativas) ----------
+    mem = normas.carregar()
+    r.base_normativa, r.avisos_normas = mem.base, mem.pendencias
+    for aviso in mem.pendencias:
+        r.add("Normas", "info", aviso)
+    status_norma = {"indeferir": "falha", "condicionar": "alerta", "alertar": "alerta", "ok": "ok"}
+    achados = normas.avaliar(mem, ext, tipo=tipo, data_em=data_em, hoje=hoje, total=total,
+                             valor_solicitado=valor_solicitado, prazo_dias=pol.prazo_dias)
+    for a in achados:
+        # Regras de norma decidem o deferimento, mas não somam no score de FRAUDE —
+        # exceto pedir mais do que o comprovante, que é tentativa de vantagem indevida.
+        peso = 35 if a.titulo == "Vantagem indevida" else 0
+        r.add(f"Norma · {a.ref}", status_norma[a.efeito], a.mensagem, peso)
+
+    # ---------- 5. Duplicidade ----------
     dups = historico.buscar_duplicados(doc.sha256, ph, chave, cnpj, numero,
                                        f"{data_em:%Y-%m-%d}" if data_em else None, total)
     if dups:
@@ -316,7 +429,7 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
     else:
         r.add("Duplicidade", "ok", "Nenhum reembolso semelhante no histórico.")
 
-    # ---------- 5. Score ----------
+    # ---------- 6. Score ----------
     r.score = min(100, sum(c.peso for c in r.checagens))
     if r.score >= 50:
         r.nivel, r.recomendacao = "alto", "Bloquear e encaminhar para auditoria."
@@ -328,6 +441,48 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         r.nivel = "indeterminado"
         r.recomendacao = "Análise incompleta (IA indisponível): dados não foram extraídos nem conferidos."
 
+    # ---------- 7. Decisão: deferido / indeferido ----------
+    if dups:
+        r.motivos.append(f"Reembolso em duplicidade com o registro #{dups[0]['id']} ({dups[0]['motivo']})"
+                         + (f" — {mem.vantagem_ref}" if mem.vantagem_ref else "") + ".")
+    fraude = r.score >= pol.limiar_fraude
+    if fraude:
+        r.motivos.append(f"Suspeita de fraude: score de risco {r.score}/100 (limite {pol.limiar_fraude}).")
+    # Problemas do DOCUMENTO (prazo, comprovante, vantagem) indeferem tudo; itens sem cobertura só são glosados.
+    r.motivos += [f"{a.mensagem} ({a.ref})" for a in achados if a.efeito == "indeferir" and a.escopo == "documento"]
+    glosas = [a for a in achados if a.efeito == "indeferir" and a.escopo == "item"]
+    r.glosas = [f"{a.mensagem} ({a.ref})" for a in glosas]
+    r.exigencias = [f"{a.mensagem} ({a.ref})" for a in achados if a.efeito in ("condicionar", "alertar")]
+    r.valor_documento = total
+    r.valor_glosado = round(sum(a.valor for a in glosas), 2)
+    if r.motivos:
+        r.decisao, r.valor_reembolsavel = "indeferido", 0.0
+        r.recomendacao = "Indeferir: " + ("suspeita de fraude." if fraude or dups
+                                           else "não atende às normas de reembolso.")
+    elif r.erro_llm:
+        r.decisao = "pendente"
+        r.motivos.append("Análise incompleta: a IA não leu o comprovante, então as normas não puderam ser "
+                         "verificadas. Reanalise com o modelo de visão no ar.")
+    elif ext.get("legibilidade") == "ruim":
+        r.decisao = "pendente"
+        r.motivos.append("Comprovante pouco legível: peça uma imagem melhor antes de decidir.")
+    else:
+        base = total if valor_solicitado is None else min(total, valor_solicitado)
+        r.valor_reembolsavel = round(max(0.0, min(base, total - r.valor_glosado)), 2)
+        if glosas and r.valor_reembolsavel <= 0.01:
+            r.decisao, r.valor_reembolsavel = "indeferido", 0.0
+            r.motivos += r.glosas
+            r.recomendacao = "Indeferir: nenhum item do comprovante tem cobertura pela norma."
+        elif glosas:
+            r.decisao = "deferido_parcial"
+            r.recomendacao = (f"Deferir parcialmente: reembolsar {brl(r.valor_reembolsavel)} e glosar "
+                              f"{brl(r.valor_glosado)} em itens sem cobertura.")
+        else:
+            r.decisao = "deferido"
+            r.recomendacao = (f"Deferir {brl(r.valor_reembolsavel)}"
+                              + (", atendidas as condições listadas." if r.exigencias
+                                 else ": atende às normas e não há indícios de fraude."))
+
     # Análise incompleta não vai para o histórico: senão, ao reanalisar o mesmo arquivo
     # com a IA no ar, ele seria acusado como duplicata de si mesmo.
     if pol.registrar and not r.erro_llm:
@@ -337,6 +492,9 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         "tipo": tipo, "emitente": emit.get("razao_social"), "cnpj": cnpj or cpf,
         "data_emissao": f"{data_em:%d/%m/%Y}" if data_em else None, "numero": numero,
         "chave_acesso": chave, "total": total, "forma_pagamento": ext.get("forma_pagamento"),
+        "valor_pago": para_float(ext.get("valor_pago")), "hora_emissao": ext.get("hora_emissao"),
+        "protocolo_autorizacao": ext.get("protocolo_autorizacao"),
+        "autorizacao_pagamento": ext.get("autorizacao_pagamento"),
         "analisado_em": datetime.now().isoformat(timespec="seconds"),
     }
     return r

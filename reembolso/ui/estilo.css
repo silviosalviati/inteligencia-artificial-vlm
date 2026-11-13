@@ -93,11 +93,6 @@ html, body { overflow-x: hidden; }
 .ra-marca svg { flex: none; width: 40px; height: 40px; }
 .ra-marca h1 { margin: 0; font: 600 21px/1.1 var(--ra-font-display); letter-spacing: .01em; color: var(--ra-ink); }
 .ra-marca p { margin: 3px 0 0; font-size: 13px; color: var(--ra-ink-2); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.ra-local {
-  display: inline-flex; align-items: center; padding: 1px 8px; border: 1px solid var(--ra-line-strong);
-  border-radius: 999px; font: 600 10.5px/1.6 var(--ra-font-display); letter-spacing: .08em;
-  text-transform: uppercase; color: var(--ra-ink-2);
-}
 .ra-status {
   display: inline-flex; align-items: center; gap: 10px; padding: 7px 14px 7px 12px;
   border-radius: 999px; border: 1px solid var(--ra-line); background: var(--ra-surface);
@@ -469,3 +464,30 @@ html, body { overflow-x: hidden; }
 .ra-temas button + button { border-left: 1px solid var(--ra-line-strong); }
 .ra-temas button[aria-pressed="true"] { background: var(--ra-accent); color: var(--ra-surface); }
 @media (max-width: 900px) { .ra-rodape { grid-template-columns: 1fr; } }
+
+/* ---------- Decisão (deferido / indeferido / pendente) ---------- */
+/* A cor do laudo segue a DECISÃO; o medidor continua mostrando o RISCO de fraude. */
+.ra-laudo.deferido { --ra-nivel: var(--ra-ok); --ra-nivel-bg: var(--ra-ok-bg); --ra-nivel-line: var(--ra-ok-line); }
+.ra-laudo.indeferido { --ra-nivel: var(--ra-falha); --ra-nivel-bg: var(--ra-falha-bg); --ra-nivel-line: var(--ra-falha-line); }
+.ra-laudo.pendente { --ra-nivel: var(--ra-ind); --ra-nivel-bg: var(--ra-ind-bg); --ra-nivel-line: var(--ra-ind-line); }
+.ra-laudo { --ra-risco: var(--ra-ind); }
+.ra-laudo.risco-baixo { --ra-risco: var(--ra-ok); }
+.ra-laudo.risco-medio { --ra-risco: var(--ra-alerta); }
+.ra-laudo.risco-alto { --ra-risco: var(--ra-falha); }
+.ra-medidor .valor { stroke: var(--ra-risco) !important; }
+.ra-carimbo { font-size: 17px !important; padding: 8px 16px 7px !important; }
+.ra-motivos { margin: 0 24px 18px; padding: 12px 16px; border-radius: 10px; background: var(--ra-nivel-bg); border: 1px solid var(--ra-nivel-line); }
+.ra-motivos .ra-rotulo { color: var(--ra-nivel); margin-bottom: 8px; }
+.ra-motivos ul { margin: 0 !important; padding-left: 18px !important; }
+.ra-motivos li { margin: 4px 0 !important; font-size: 13.5px; line-height: 1.45; color: var(--ra-ink); }
+.ra-motivos li.mais { list-style: none; margin-left: -18px !important; color: var(--ra-ink-3); font-size: 12.5px; }
+.ra-laudo .ra-banner + .ra-banner { margin-top: -10px; }
+@media (max-width: 600px) { .ra-motivos { margin: 0 14px 14px; } }
+.ra-laudo.deferido_parcial { --ra-nivel: var(--ra-alerta); --ra-nivel-bg: var(--ra-alerta-bg); --ra-nivel-line: var(--ra-alerta-line); }
+.ra-motivos.cond { --ra-nivel: var(--ra-info); --ra-nivel-bg: var(--ra-info-bg); --ra-nivel-line: var(--ra-info-line); }
+.ra-motivos + .ra-motivos { margin-top: -8px; }
+.ra-valor { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 10px; }
+.ra-valor span { font: 600 10.5px/1 var(--ra-font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--ra-ink-3); width: 100%; }
+.ra-valor strong { font: 600 26px/1.1 var(--ra-font-display); color: var(--ra-nivel); font-variant-numeric: tabular-nums; }
+.ra-valor em { font-style: normal; font-size: 13px; color: var(--ra-ink-2); }
+@media (max-width: 900px) { .ra-valor { justify-content: center; } }

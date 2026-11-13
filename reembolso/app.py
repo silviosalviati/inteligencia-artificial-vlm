@@ -11,7 +11,7 @@ import gradio as gr
 from gradio.data_classes import FileData
 
 from . import forensics as fx
-from . import llm
+from . import llm, normas
 from .pipeline import Politica, analisar
 from .validators import brl, para_float
 
@@ -26,6 +26,8 @@ STATUS = {  # rótulo do grupo, ícone, aberto por padrão
     "info": ("Informativos", "i", False),
     "ok": ("Aprovadas", "✓", False),
 }
+DECISOES = {"deferido": "Deferido", "deferido_parcial": "Deferido parcialmente", "indeferido": "Indeferido",
+            "pendente": "Pendente"}
 NIVEIS = {"baixo": "Risco baixo", "medio": "Risco médio", "alto": "Risco alto",
           "indeterminado": "Indeterminado"}
 TIPOS = {"nfce": "NFC-e", "nfe_danfe": "NF-e (DANFE)", "cupom_sat": "Cupom fiscal SAT",
@@ -63,7 +65,7 @@ def _topo(online: bool | None = None) -> str:
         "</small></div></div>")
     return (f"<header class='ra-topo'><div class='ra-marca'>{LOGO}<div><h1>Auditoria de Reembolsos</h1>"
             "<p>Análise de risco de fraude em comprovantes"
-            "<span class='ra-local' title='Nenhum dado do comprovante sai desta máquina'>● 100% local</span></p>"
+            "</p>"
             f"</div></div>{status}</header>")
 
 
@@ -153,17 +155,41 @@ def _laudo(r, colaborador: str, valor_solicitado) -> str:
         meta.append(f"<span>Colaborador <b>{_e(colaborador)}</b></span>")
     if valor_solicitado is not None:
         meta.append(f"<span>Solicitado <b>{_e(brl(float(valor_solicitado)))}</b></span>")
-    if r.id_historico:
-        meta.append(f"<span>Histórico <b>#{r.id_historico}</b></span>")
+    meta.append(f"<span>{NIVEIS[r.nivel]} <b>{r.score}/100</b></span>")
+    if r.base_normativa:
+        meta.append(f"<span>Base <b>{_e(r.base_normativa)}</b></span>")
+
+    if r.decisao == "indeferido":
+        listas = [("Motivos do indeferimento", r.motivos, "")]
+    elif r.decisao == "pendente":
+        listas = [("Por que está pendente", r.motivos, "")]
+    else:
+        listas = [("Itens glosados (sem cobertura)", r.glosas, ""),
+                  ("Condições para o pagamento", r.exigencias, " cond")]
+    motivos = ""
+    for titulo_lista, lista, cls in listas:
+        if not lista:
+            continue
+        itens = "".join(f"<li>{_e(m)}</li>" for m in lista[:8])
+        mais = f"<li class='mais'>+{len(lista) - 8} na aba Checagens</li>" if len(lista) > 8 else ""
+        motivos += (f"<div class='ra-motivos{cls}'><span class='ra-rotulo'>{titulo_lista}</span>"
+                    f"<ul>{itens}{mais}</ul></div>")
+    valor = ""
+    if r.valor_reembolsavel is not None and r.valor_documento is not None:
+        glosa = f" · glosa {brl(r.valor_glosado)}" if r.valor_glosado else ""
+        valor = (f"<div class='ra-valor'><span>Valor reembolsável</span><strong>{brl(r.valor_reembolsavel)}</strong>"
+                 f"<em>de {brl(r.valor_documento)} no comprovante{glosa}</em></div>")
     banner = ""
     if r.erro_llm:
         banner = (f"<div class='ra-banner'><b>Extração por IA indisponível.</b> {_e(r.erro_llm)} "
                   "Os dados do documento não foram lidos nem conferidos; reanalise com o modelo conectado.</div>")
-    return (f"<section class='ra-laudo {r.nivel}'><div class='ra-laudo-topo'>{_medidor(r.score)}"
-            f"<div class='ra-veredito'><span class='ra-carimbo'>{NIVEIS[r.nivel]}</span>"
-            f"<p class='ra-recomendacao'>{_e(r.recomendacao)}</p>"
+    for aviso in r.avisos_normas:
+        banner += f"<div class='ra-banner'><b>Normas:</b> {_e(aviso)}</div>"
+    return (f"<section class='ra-laudo {r.decisao} risco-{r.nivel}'><div class='ra-laudo-topo'>{_medidor(r.score)}"
+            f"<div class='ra-veredito'><span class='ra-carimbo'>{DECISOES[r.decisao]}</span>"
+            f"<p class='ra-recomendacao'>{_e(r.recomendacao)}</p>{valor}"
             f"<div class='ra-meta'>{''.join(meta)}</div></div></div>"
-            f"{banner}<div class='ra-contagem'>{contagem}</div></section>")
+            f"{motivos}{banner}<div class='ra-contagem'>{contagem}</div></section>")
 
 
 def _checagens(checagens) -> str:
@@ -219,12 +245,15 @@ def _resumo(r, colaborador: str, valor_solicitado) -> str:
         _cartao("Tipo", TIPOS.get(res.get("tipo"), res.get("tipo"))),
         _cartao("Data de emissão", res.get("data_emissao")),
         _cartao("Número", res.get("numero"), mono=True),
-        _cartao("Pagamento", res.get("forma_pagamento")),
+        _cartao("Forma de pagamento", res.get("forma_pagamento")),
+        _cartao("Valor pago", brl(res.get("valor_pago")) if res.get("valor_pago") is not None else None),
+        _cartao("Autorização do cartão", res.get("autorizacao_pagamento"), mono=True,
+                extra="<small>Código AUT/NSU da operadora</small>"),
+        _cartao("Protocolo SEFAZ", res.get("protocolo_autorizacao"), mono=True,
+                extra="<small>Autorização da nota pelo Fisco</small>"),
         _cartao("Colaborador", colaborador or None),
         _cartao("Chave de acesso", chave_fmt, "inteiro", mono=True),
     ]
-    if r.id_historico:
-        cartoes.append(_cartao("Registro no histórico", f"#{r.id_historico}"))
     rf = r.cnpj_receita or {}
     if rf.get("status") == "ok":
         local = "/".join(x for x in (rf.get("municipio"), rf.get("uf")) if x)
@@ -234,41 +263,65 @@ def _resumo(r, colaborador: str, valor_solicitado) -> str:
     html = f"<div class='ra-cartoes'>{''.join(cartoes)}</div>"
     links = [u for u in dict.fromkeys(r.links_consulta) if u.lower().startswith(("http://", "https://"))]
     html += "<h3 class='ra-sub'>Consulta na SEFAZ</h3>"
+    pc = r.dados.get("chave") or {}
     if links:
         itens = "".join(
-            f"<a href='{_e(u)}' target='_blank' rel='noopener noreferrer'><div><b>Consultar em "
-            f"{_e(urlparse(u).hostname or 'SEFAZ')}</b><code>{_e(u[:110])}{'…' if len(u) > 110 else ''}</code>"
+            f"<a href='{_e(u)}' target='_blank' rel='noopener noreferrer'><div><b>Abrir o portal oficial "
+            f"({_e(urlparse(u).hostname or 'SEFAZ')})</b><code>{_e(u[:110])}{'…' if len(u) > 110 else ''}</code>"
             "</div><span class='ir' aria-hidden='true'>↗</span></a>" for u in links)
-        html += (f"<div class='ra-links'>{itens}</div><p class='ra-nota'>Confira se a nota existe e se o valor "
-                 "bate. Os links abrem o portal oficial no navegador.</p>")
+        passo = (f"<p class='ra-nota'>No portal, cole a chave <code>{_e(chave)}</code>, resolva o captcha e confira "
+                 "se a nota existe e se o valor bate.</p>" if chave else "")
+        html += f"<div class='ra-links'>{itens}</div>{passo}"
+    elif pc.get("dv_ok"):
+        html += (f"<p class='ra-nota'>Consulte no portal da SEFAZ-{_e(pc.get('uf') or 'UF')} com a chave "
+                 f"<code>{_e(chave)}</code>.</p>")
     else:
-        html += "<p class='ra-nota'>Nenhum link oficial de consulta foi encontrado no documento.</p>"
+        html += ("<p class='ra-nota'>Sem chave de acesso válida para consulta: confira a chave impressa no "
+                 "comprovante.</p>")
     return html
 
 
 # ---------------------------------------------------------------- ações
-def _executar(arquivo, colaborador, valor_solicitado, valor_maximo, prazo, online, registrar):
-    if not arquivo:
-        raise gr.Error("Envie a imagem ou o PDF do comprovante.")
-    padrao = Politica()
+def _valor(texto) -> tuple[float | None, str | None]:
+    """Converte o valor solicitado digitado ("1.234,56"); devolve (valor, mensagem de erro)."""
+    t = str(texto or "").strip()
+    if not t:
+        return None, None
+    v = para_float(t)
+    if v is None:
+        return None, f"Valor solicitado inválido: \"{t}\". Use, por exemplo, 123,45."
+    return (v or None), None
+
+
+NADA = gr.skip()  # "não altere este componente"
+
+
+def _executar(pronto, arquivo, colaborador, valor_solicitado, valor_maximo, prazo, limiar, online, registrar):
+    # Entradas inválidas já foram avisadas em _iniciar: nada a fazer (sem exceção, sem traceback).
+    if not pronto or not arquivo:
+        return NADA, NADA, NADA, NADA, NADA, False, NADA
     pol = Politica(
-        valor_maximo=float(valor_maximo) if valor_maximo else padrao.valor_maximo,
-        prazo_dias=int(prazo) if prazo else padrao.prazo_dias,
+        valor_maximo=float(valor_maximo) if valor_maximo else None,
+        prazo_dias=int(prazo) if prazo else None,
+        limiar_fraude=int(limiar) if limiar else Politica().limiar_fraude,
         online=online, registrar=registrar)
     colaborador = (colaborador or "").strip()
-    texto_valor = str(valor_solicitado or "").strip()
-    valor_solicitado = para_float(texto_valor) if texto_valor else None
-    if texto_valor and valor_solicitado is None:
-        raise gr.Error(f"Valor solicitado inválido: '{texto_valor}'. Use, por exemplo, 123,45.")
-    valor_solicitado = valor_solicitado or None
+    valor_solicitado, _ = _valor(valor_solicitado)
     try:
         r = analisar(arquivo, pol, colaborador=colaborador, valor_solicitado=valor_solicitado)
     except ValueError as e:  # arquivo vazio, corrompido, protegido por senha...
-        raise gr.Error(str(e)) from e
+        gr.Warning(str(e), title="Atenção")
+        return NADA, NADA, NADA, NADA, NADA, False, NADA
 
     r.checagens.sort(key=lambda c: (ORDEM[c.status], -c.peso))
+    # documento que veio girado: a prévia passa a mostrar a versão endireitada usada na leitura
+    previa_nova = NADA
+    if r.pagina_corrigida is not None:
+        img = r.pagina_corrigida.copy()
+        img.thumbnail((1400, 1400))
+        previa_nova = gr.Image(value=img, visible=True)
     return (_laudo(r, colaborador, valor_solicitado), _resumo(r, colaborador, valor_solicitado),
-            _checagens(r.checagens), r.ela_mapa, r.dados, True)
+            _checagens(r.checagens), r.ela_mapa, r.dados, True, previa_nova)
 
 
 def _status_llm():
@@ -286,13 +339,20 @@ def _previa(arquivo):
     return gr.Image(value=img, visible=True)
 
 
-def _iniciar():
+def _iniciar(arquivo, valor_solicitado):
+    """Valida o envio antes de começar; se faltar algo, só avisa e deixa a tela como está."""
+    erro = "Envie a foto ou o PDF do comprovante antes de analisar." if not arquivo else _valor(valor_solicitado)[1]
+    if erro:
+        gr.Warning(erro, title="Atenção")
+        return NADA, NADA, NADA, NADA, NADA, False, False
     online = llm.disponivel()
     return (gr.Button(value="Analisando…", interactive=False), gr.Button(interactive=False),
-            _topo(online), gr.HTML(value=_carregando(online), visible=True), gr.Column(visible=False), False)
+            _topo(online), gr.HTML(value=_carregando(online), visible=True), gr.Column(visible=False), False, True)
 
 
-def _finalizar(ok, arquivo):
+def _finalizar(pronto, ok, arquivo):
+    if not pronto:
+        return NADA, NADA, NADA, NADA
     estado = gr.HTML(visible=False) if ok else gr.HTML(value=_erro() if arquivo else _vazio(), visible=True)
     return (gr.Button(value="Analisar comprovante", interactive=True), gr.Button(interactive=True),
             estado, gr.Column(visible=bool(ok)))
@@ -313,15 +373,19 @@ sem abrir esta tela. Funciona só nesta máquina (<code>127.0.0.1</code>), com a
 cliente = Client("http://127.0.0.1:7860/")
 r = cliente.predict(handle_file("comprovante.pdf"), "Maria Souza", 123.45,
                     api_name="/analisar")
-print(r["score"], r["nivel"], r["recomendacao"])</code></pre>
-<p>Parâmetros, nesta ordem: arquivo, colaborador, valor solicitado e, opcionais, limite (1000), prazo em dias (90),
-consultar CNPJ (<code>True</code>) e registrar no histórico (<code>True</code>). A resposta é um JSON com score,
-nível, recomendação, checagens e dados extraídos. Sem programar, use o terminal:
+print(r["decisao"], r["motivos"])</code></pre>
+<p>Parâmetros, nesta ordem: arquivo, colaborador, valor solicitado e, opcionais, consultar CNPJ (<code>True</code>),
+registrar no histórico (<code>True</code>) e score de fraude que indefere (<code>50</code>). A resposta é um JSON com
+a decisão (<code>deferido</code>, <code>indeferido</code> ou <code>pendente</code>), motivos, condições, score,
+checagens e dados extraídos. Sem programar, use o terminal:
 <code>python -m reembolso.cli comprovante.pdf --json</code>.</p>
 </div></details>
 <details><summary>Configurações</summary><div class='ra-rodape-corpo'>
-<p><b>Política de reembolso</b> (limite, prazo, consulta de CNPJ, histórico): clique em <i>Política de
-reembolso</i>, na barra do pedido. Vale a partir da próxima análise.</p>
+<p><b>Normas:</b> a decisão segue a memória das Instruções Normativas (pasta <code>normas/</code>, gerada a
+partir dos PDFs em <code>INs/</code>). Ao adicionar ou atualizar uma IN, a memória precisa ser revisada; enquanto
+isso, a tela avisa que a IN não está sendo aplicada.</p>
+<p><b>Política</b> (prazo, score de fraude, consulta de CNPJ, histórico): clique em <i>Política de reembolso</i>,
+na barra do pedido. Vale a partir da próxima análise.</p>
 <p><b>Tema da tela:</b>
 <span class='ra-temas' role='group' aria-label='Tema'>
 <button type='button' data-ra-tema='claro'>Claro</button><button type='button' data-ra-tema='escuro'>Escuro</button><button type='button' data-ra-tema='auto'>Automático</button></span></p>
@@ -357,17 +421,19 @@ TEMA = gr.themes.Base(
 
 # ---------------------------------------------------------------- API
 def analisar_api(arquivo: FileData, colaborador: str = "", valor_solicitado: float | None = None,
-                 limite: float = 1000, prazo_dias: int = 90, consultar_cnpj: bool = True,
-                 registrar: bool = True) -> dict:
-    """Analisa um comprovante (imagem ou PDF) e devolve score, nível, checagens e dados extraídos."""
+                 consultar_cnpj: bool = True, registrar: bool = True, limiar_fraude: int = 50) -> dict:
+    """Analisa um comprovante (imagem ou PDF): decisão (deferido/indeferido/pendente), motivos, score e dados."""
     caminho = arquivo.path if isinstance(arquivo, FileData) else (arquivo or {}).get("path", arquivo)
-    pol = Politica(valor_maximo=limite, prazo_dias=int(prazo_dias), online=consultar_cnpj, registrar=registrar)
+    pol = Politica(online=consultar_cnpj, registrar=registrar, limiar_fraude=int(limiar_fraude))
     try:
         r = analisar(caminho, pol, colaborador=(colaborador or "").strip(),
                      valor_solicitado=valor_solicitado or None)
     except ValueError as e:
-        raise gr.Error(str(e)) from e
+        raise gr.Error(str(e), title="Erro", print_exception=False) from e
     return r.para_dict()
+
+
+MEMORIA = normas.carregar()  # só para os valores padrão da tela; cada análise relê a memória
 
 
 # ---------------------------------------------------------------- layout
@@ -398,10 +464,14 @@ with gr.Blocks(title="Auditoria de Reembolsos", analytics_enabled=False) as demo
                                          min_width=120, elem_id="ra-nova")
                 with gr.Accordion("Política de reembolso", open=False, elem_id="ra-politica"):
                     with gr.Row():
-                        valor_max = gr.Number(label="Limite por reembolso (R$)", value=1000, minimum=0,
-                                              min_width=150)
-                        prazo = gr.Number(label="Prazo máximo (dias)", value=90, minimum=0, precision=0,
-                                          min_width=150)
+                        prazo = gr.Number(label="Prazo para pedir (dias)", value=MEMORIA.prazo_dias, minimum=1,
+                                          precision=0, min_width=150,
+                                          info=f"Da memória: {MEMORIA.prazo_ref or 'sem IN carregada'}.")
+                        limiar = gr.Number(label="Indeferir por fraude a partir do score", value=50, minimum=1,
+                                           maximum=100, precision=0, min_width=150,
+                                           info="Risco alto = 50. Abaixo disso, o pedido segue as normas.")
+                        valor_max = gr.Number(label="Limite interno (R$, opcional)", value=None, minimum=0,
+                                              min_width=150, info="A IN 001-004 não define teto por reembolso.")
                     with gr.Row():
                         online = gr.Checkbox(label="Consultar CNPJ na Receita (BrasilAPI)", value=True,
                                              info="Envia só o CNPJ do emitente; nada do colaborador sai da máquina.")
@@ -434,10 +504,11 @@ with gr.Blocks(title="Auditoria de Reembolsos", analytics_enabled=False) as demo
     gr.Timer(30).tick(_status_llm, outputs=topo, concurrency_id="status", concurrency_limit=None, **interno)
     arquivo.change(_previa, arquivo, previa, concurrency_id="previa", concurrency_limit=None,
                    api_visibility="private", show_progress="minimal")
-    botao.click(_iniciar, outputs=[botao, novo, topo, estado, resultados, ok], **interno).then(
-        _executar, [arquivo, colaborador, valor_sol, valor_max, prazo, online, registrar],
-        [cabecalho, resumo, checks, ela, bruto, ok], **interno).then(
-        _finalizar, [ok, arquivo], [botao, novo, estado, resultados], **interno)
+    pronto = gr.State(False)  # o envio passou na validação?
+    botao.click(_iniciar, [arquivo, valor_sol], [botao, novo, topo, estado, resultados, ok, pronto], **interno).then(
+        _executar, [pronto, arquivo, colaborador, valor_sol, valor_max, prazo, limiar, online, registrar],
+        [cabecalho, resumo, checks, ela, bruto, ok, previa], **interno).then(
+        _finalizar, [pronto, ok, arquivo], [botao, novo, estado, resultados], **interno)
     novo.click(_nova_analise, outputs=[arquivo, colaborador, valor_sol, previa, estado, resultados,
                                        cabecalho, resumo, checks, ela, bruto, ok], **interno)
     gr.api(analisar_api, api_name="analisar")

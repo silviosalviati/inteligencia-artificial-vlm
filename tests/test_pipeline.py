@@ -23,7 +23,9 @@ def extracao(**extra):
         "numero_documento": "000.012.345",
         "data_emissao": "05/11/2026",
         "chave_acesso": chave_valida(),
-        "itens": [{"descricao": "Café", "valor_total": 10.0}, {"descricao": "Pão", "valor_total": 20.5}],
+        "itens": [{"descricao": "Café", "valor_total": 10.0, "categoria": "alimentacao"},
+                  {"descricao": "Pão", "valor_total": 20.5, "categoria": "alimentacao"}],
+        "categoria_despesa": "alimentacao", "rasura": False, "assinatura": False, "carimbo_cnpj": False,
         "total": 30.5,
         "legibilidade": "boa",
         "sinais_suspeitos": [],
@@ -32,7 +34,7 @@ def extracao(**extra):
     return dados
 
 
-class TestPipeline(unittest.TestCase):
+class BasePipeline(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -54,6 +56,9 @@ class TestPipeline(unittest.TestCase):
     def mensagens(self, r, status):
         return [c.mensagem for c in r.checagens if c.status == status]
 
+
+
+class TestPipeline(BasePipeline):
     def test_documento_correto_tem_risco_baixo(self):
         r = self.rodar()
         self.assertEqual(r.nivel, "baixo", r.checagens)
@@ -96,7 +101,26 @@ class TestPipeline(unittest.TestCase):
         r = self.rodar(extracao(chave_acesso=url), registrar=False)
         self.assertEqual(r.dados["resumo"]["chave_acesso"], chave_valida())
         self.assertFalse(any("tamanho inválido" in m for m in self.mensagens(r, "falha")))
-        self.assertIn(url, r.links_consulta)
+        # a URL lida pela IA não vira link (ela erra letras); entra o portal oficial da UF da chave
+        self.assertEqual(r.links_consulta, ["https://www.nfce.fazenda.sp.gov.br/qrcode"])
+
+    def test_quantidade_lida_errado_nao_vira_alerta_de_fraude(self):
+        # Nota: "SALADA + ATUM 2 UN 93,00 186,00"; a IA leu quantidade 1 e total 93,00.
+        itens = [{"descricao": "SALADA + MIGNON", "quantidade": 1, "valor_unitario": 93.0, "valor_total": 93.0,
+                  "categoria": "alimentacao"},
+                 {"descricao": "SALADA + ATUM", "quantidade": 1, "valor_unitario": 93.0, "valor_total": 93.0,
+                  "categoria": "alimentacao"},
+                 {"descricao": "Gorjeta Sugerida", "quantidade": 1, "valor_unitario": 40.04, "valor_total": 40.04,
+                  "categoria": "outro"}]
+        r = self.rodar(extracao(itens=itens, total=319.04), registrar=False)
+        self.assertFalse(any("Soma dos itens" in m for m in self.mensagens(r, "alerta")))
+        self.assertTrue(any("provável quantidade lida errado" in m for m in self.mensagens(r, "info")))
+
+    def test_quantidade_vezes_unitario_fecha_a_soma(self):
+        itens = [{"descricao": "SALADA + ATUM", "quantidade": 2, "valor_unitario": 93.0, "valor_total": 93.0,
+                  "categoria": "alimentacao"}]
+        r = self.rodar(extracao(itens=itens, total=186.0), registrar=False)
+        self.assertTrue(any("quantidade × valor unitário" in m for m in self.mensagens(r, "ok")))
 
     def test_preenchimento_com_zeros_e_nao_indicios(self):
         ext = extracao(emitente={"razao_social": "X", "cnpj": "00000000000000"},
@@ -118,6 +142,32 @@ class TestPipeline(unittest.TestCase):
         r = self.rodar(ext, registrar=False)
         self.assertEqual(r.dados["resumo"]["chave_acesso"], chave)
         self.assertEqual(self.mensagens(r, "falha"), [])
+
+    def test_chave_da_ia_com_dv_errado_nao_gera_alertas_cruzados(self):
+        errada = chave_valida()[:43] + str((int(chave_valida()[43]) + 1) % 10)
+        r = self.rodar(extracao(chave_acesso=errada, data_emissao="05/10/2026"), registrar=False)
+        msgs = self.mensagens(r, "alerta")
+        self.assertTrue(any("Dígito verificador" in m for m in msgs))
+        self.assertFalse(any("Mês da chave" in m for m in msgs))
+
+    def test_documento_de_cabeca_para_baixo_e_endireitado_e_relido(self):
+        from PIL import Image
+        leituras = [extracao(orientacao="de_cabeca_para_baixo", total=None, itens=[]), extracao(orientacao="normal")]
+        politica = Politica(online=False, registrar=False)
+        with patch("reembolso.llm.disponivel", return_value=True),                 patch("reembolso.llm.analisar_imagem", side_effect=leituras) as ia:
+            r = analisar(str(self.img), politica, hoje=HOJE)
+        self.assertEqual(ia.call_count, 2)
+        original = Image.open(self.img).convert("RGB")
+        self.assertEqual(list(r.pagina_corrigida.getdata())[:50], list(original.rotate(180).getdata())[:50])
+        self.assertTrue(any("de cabeça para baixo" in m for m in self.mensagens(r, "info")))
+        self.assertEqual(r.decisao, "deferido")
+
+    def test_documento_que_continua_girado_fica_pendente(self):
+        girado = extracao(orientacao="topo_a_direita")
+        with patch("reembolso.llm.disponivel", return_value=True),                 patch("reembolso.llm.analisar_imagem", side_effect=[girado, girado, girado]) as ia:
+            r = analisar(str(self.img), Politica(online=False, registrar=False), hoje=HOJE)
+        self.assertEqual(ia.call_count, 3)   # leitura + no máximo 2 correções
+        self.assertEqual(r.decisao, "pendente")
 
     def test_arquivo_corrompido_gera_erro_legivel(self):
         ruim = self.dir / "ruim.jpg"

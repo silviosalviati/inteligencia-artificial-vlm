@@ -88,11 +88,12 @@ from gradio_client import Client, handle_file   # pip install gradio_client
 
 cliente = Client("http://127.0.0.1:7860/")
 r = cliente.predict(handle_file("comprovante.pdf"), "Maria Souza", 123.45, api_name="/analisar")
-print(r["score"], r["nivel"], r["recomendacao"])
+print(r["decisao"], r["motivos"])
 ```
 
-Parâmetros: arquivo, colaborador, valor solicitado e, opcionais, limite (1000), prazo em dias (90),
-consultar CNPJ (`True`) e registrar no histórico (`True`). As mesmas instruções aparecem no rodapé da interface.
+Parâmetros: arquivo, colaborador, valor solicitado e, opcionais, consultar CNPJ (`True`), registrar no
+histórico (`True`) e score de fraude que indefere (`50`). A resposta traz `decisao` (`deferido`,
+`indeferido` ou `pendente`), `motivos`, `exigencias`, `score`, `checagens` e `dados`. As mesmas instruções aparecem no rodapé da interface.
 
 ### Linha de comando (opcional)
 
@@ -115,6 +116,26 @@ Em CPU (i5-7300U), cada análise com IA leva de 1 a 4 minutos; com GPU, poucos s
 ```
 
 Os testes não precisam do modelo nem de internet: a resposta da IA é simulada.
+
+## Decisão: deferido ou indeferido
+
+Cada análise termina com uma decisão, baseada na **memória normativa** (pasta `normas/`): um arquivo por
+Instrução Normativa, com as regras de reembolso e a referência de cada uma (ex.: `IN 001-004 §4.2.3`).
+O modelo de visão lê e classifica o comprovante e cada item; as regras são aplicadas de forma determinística.
+
+| Decisão | Quando |
+|---|---|
+| **Indeferido** | duplicidade; suspeita de fraude (score ≥ 50, ajustável); item sem cobertura (bebida alcoólica, medicamento, higiene pessoal, hospedagem/locação fora do CONCUR, bens e materiais…); mais de 360 dias do gasto; comprovante sem emitente, data, descrição ou valor, ou com rasura; recibo sem número ou sem assinatura/carimbo; só comprovante de cartão; valor pedido maior que o do comprovante |
+| **Deferido** | nada acima; condições da norma (táxi/aplicativo, combustível, refeição…) aparecem como exigências para o pagamento |
+| **Pendente** | a IA não leu o comprovante (modelo fora do ar) ou ele está ilegível |
+
+Para não indeferir por engano, um item só é vetado quando a **descrição** dele bate com a norma
+(ex.: "CERVEJA HEINEKEN"). Quando o sinal é indireto (só a classificação da IA ou o nome do
+estabelecimento), vira alerta para conferência.
+
+**Nova IN:** coloque o PDF em `INs/` e crie o arquivo de memória em `normas/` (mesmo formato de
+`normas/IN-001-004.json`, com o `sha256` do PDF). Enquanto isso não for feito, a análise avisa que a IN não
+está sendo aplicada. A pasta `INs/` é ignorada pelo Git por conter documentos de divulgação interna.
 
 ## O que é verificado
 
@@ -146,7 +167,8 @@ O sistema prioriza a revisão; **não deve reprovar sozinho**.
 main.py                 sobe modelo + interface web e abre o navegador
 models/                 GGUF baixados de huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF
 bin/                    llama.cpp b12292 (CPU ou GPU)
-reembolso/pipeline.py   orquestração, regras e score
+reembolso/pipeline.py   orquestração, regras, score e decisão
+reembolso/normas.py     memória normativa (normas/*.json)
 reembolso/llm.py        prompt + JSON schema da extração
 reembolso/validators.py CNPJ/CPF/chave de acesso
 reembolso/forensics.py  PDF/imagem, metadados, ELA, QR, pHash

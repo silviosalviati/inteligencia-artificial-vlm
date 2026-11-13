@@ -1,0 +1,486 @@
+{
+  "codigo": "IN 001-004",
+  "titulo": "Pagamentos Gerais",
+  "versao": "20",
+  "aprovada_em": "25/05/2026",
+  "fonte": {
+    "arquivo": "INs/IN 001-004 Pagamentos Gerais.pdf",
+    "sha256": "a8fda000dc99c176af03412f99c8376a790ce7af52fbabbfb1fda7779690b937"
+  },
+  "observacao": "Memória curada a partir da IN. Regras de reembolso a funcionários (CONCUR, §4.2.3 e §4.3). Ao publicar nova versão da IN, revise este arquivo e atualize o sha256.",
+  "prazo_solicitacao_dias": {
+    "valor": 360,
+    "ref": "§4.3",
+    "texto": "As solicitações de reembolso a funcionários devem ocorrer no máximo até 360 dias após a data do gasto, conforme comprovante."
+  },
+  "comprovante": {
+    "ref": "§4.1",
+    "texto": "Nota Fiscal ou Recibo (só se o fornecedor for isento de NF), sem rasuras, com dados do emitente, data de emissão, descrição do bem/serviço e valor. Recibo: numeração e assinatura e/ou carimbo do CNPJ.",
+    "exige_emitente": true,
+    "exige_data": true,
+    "exige_descricao": true,
+    "exige_valor": true,
+    "proibe_rasura": true,
+    "recibo_exige_numero": true,
+    "recibo_exige_assinatura_ou_carimbo": true
+  },
+  "vantagem_indevida": {
+    "ref": "§4.4.2",
+    "texto": "O favorecido não pode aferir vantagem no processo de reembolso de despesas."
+  },
+  "regras": [
+    {
+      "id": "bebida_alcoolica",
+      "titulo": "Bebidas alcoólicas",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [
+        "bebida_alcoolica"
+      ],
+      "palavras": [
+        "cerveja",
+        "cerv",
+        "chopp",
+        "chope",
+        "vinho",
+        "espumante",
+        "champagne",
+        "prosecco",
+        "whisky",
+        "uisque",
+        "vodka",
+        "cachaca",
+        "caipirinha",
+        "caipiroska",
+        "gin",
+        "licor",
+        "tequila",
+        "rum",
+        "drink",
+        "drinks",
+        "heineken",
+        "brahma",
+        "skol",
+        "budweiser",
+        "stella artois",
+        "eisenbahn",
+        "spaten",
+        "itaipava",
+        "amstel",
+        "bohemia",
+        "michelob",
+        "chandon",
+        "aperol",
+        "campari",
+        "jagermeister",
+        "sake",
+        "soju"
+      ]
+    },
+    {
+      "id": "uso_pessoal",
+      "titulo": "Bens, serviços e itens de higiene/uso pessoal",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [
+        "higiene_pessoal"
+      ],
+      "palavras": [
+        "shampoo",
+        "xampu",
+        "condicionador",
+        "sabonete",
+        "desodorante",
+        "creme dental",
+        "pasta de dente",
+        "escova de dente",
+        "fio dental",
+        "absorvente",
+        "fralda",
+        "barbeador",
+        "lamina de barbear",
+        "aparelho de barbear",
+        "perfume",
+        "colonia",
+        "hidratante",
+        "protetor solar",
+        "maquiagem",
+        "batom",
+        "esmalte",
+        "cotonete",
+        "papel higienico"
+      ]
+    },
+    {
+      "id": "medicamentos",
+      "titulo": "Medicamentos",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [
+        "medicamento"
+      ],
+      "palavras": [
+        "dipirona",
+        "paracetamol",
+        "ibuprofeno",
+        "dorflex",
+        "neosaldina",
+        "buscopan",
+        "omeprazol",
+        "amoxicilina",
+        "azitromicina",
+        "loratadina",
+        "nimesulida",
+        "diclofenaco",
+        "torsilax",
+        "benegrip",
+        "engov",
+        "epocler",
+        "estomazil",
+        "comprimido",
+        "comprimidos",
+        "xarope",
+        "pomada",
+        "antibiotico",
+        "antialergico",
+        "analgesico"
+      ],
+      "emitente": [
+        "drogaria",
+        "farmacia",
+        "drogasil",
+        "droga raia",
+        "drogaraia",
+        "pague menos",
+        "panvel",
+        "drogao",
+        "ultrafarma"
+      ]
+    },
+    {
+      "id": "consumo_coletivo",
+      "titulo": "Alimentos/bebidas para consumo coletivo (balas, doces, bolos, energéticos, refrigerantes)",
+      "ref": "§4.2.3",
+      "efeito": "alertar",
+      "condicao": "Não reembolsável se disponibilizado para consumo de colaboradores, clientes ou fornecedores. Confirme que é consumo individual em viagem/refeição permitida.",
+      "categorias": [
+        "doces_lanches"
+      ],
+      "palavras": [
+        "bala",
+        "balas",
+        "chiclete",
+        "pirulito",
+        "bombom",
+        "bombons",
+        "chocolate",
+        "doce",
+        "doces",
+        "bolo",
+        "torta",
+        "brigadeiro",
+        "energetico",
+        "red bull",
+        "monster",
+        "refrigerante"
+      ]
+    },
+    {
+      "id": "confraternizacao",
+      "titulo": "Confraternizações, happy hour e aniversários",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [],
+      "palavras": [
+        "happy hour",
+        "confraternizacao",
+        "comemoracao",
+        "aniversario",
+        "bolo de aniversario",
+        "vela de aniversario"
+      ]
+    },
+    {
+      "id": "combustivel",
+      "titulo": "Combustível",
+      "ref": "§4.2.3",
+      "efeito": "condicionar",
+      "condicao": "Combustível de veículo próprio NÃO é reembolsável. Só é aceito para veículo alugado (anexar contrato de locação) ou da frota (com o \"de acordo\" da Frota Própria).",
+      "categorias": [
+        "combustivel"
+      ],
+      "palavras": [
+        "gasolina",
+        "etanol",
+        "diesel",
+        "gnv",
+        "alcool comum",
+        "alcool hidratado",
+        "aditivada",
+        "combustivel",
+        "s10",
+        "s500"
+      ],
+      "emitente": [
+        "posto",
+        "auto posto",
+        "autoposto"
+      ]
+    },
+    {
+      "id": "conta_consumo",
+      "titulo": "Contas de consumo, taxas e impostos",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [
+        "conta_consumo_taxa_imposto"
+      ],
+      "palavras": [
+        "iptu",
+        "ipva",
+        "licenciamento",
+        "multa de transito",
+        "darf",
+        "gru",
+        "conta de luz",
+        "conta de energia",
+        "energia eletrica",
+        "conta de agua",
+        "agua e esgoto",
+        "conta de gas",
+        "conta de telefone",
+        "fatura de energia",
+        "fatura de telefone"
+      ],
+      "emitente": [
+        "sabesp",
+        "enel",
+        "cemig",
+        "copel",
+        "comgas",
+        "cpfl",
+        "coelba",
+        "celpe",
+        "eletropaulo"
+      ]
+    },
+    {
+      "id": "decoracao_presentes",
+      "titulo": "Decoração, artigos de época, presentes, brindes e flores",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [
+        "presente_flores_decoracao"
+      ],
+      "palavras": [
+        "decoracao",
+        "enfeite",
+        "enfeites",
+        "presente",
+        "presentes",
+        "brinde",
+        "brindes",
+        "coroa de flores",
+        "buque",
+        "arranjo floral",
+        "embalagem para presente"
+      ],
+      "emitente": [
+        "floricultura"
+      ]
+    },
+    {
+      "id": "hospedagem_locacao_passagem",
+      "titulo": "Hospedagem, locação de veículos e passagens aéreas fora do CONCUR",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "condicao": "Exceções só com avaliação prévia da área de Viagens Corporativas (IN 001-286).",
+      "categorias": [
+        "hospedagem",
+        "locacao_veiculo",
+        "passagem_aerea"
+      ],
+      "palavras": [
+        "hospedagem",
+        "pernoite",
+        "locacao de veiculo",
+        "aluguel de carro",
+        "aluguel de veiculo",
+        "passagem aerea",
+        "bilhete aereo",
+        "tarifa aerea"
+      ],
+      "emitente": [
+        "hotel",
+        "pousada",
+        "hostel",
+        "localiza",
+        "movida",
+        "unidas",
+        "locadora",
+        "latam",
+        "gol linhas",
+        "azul linhas"
+      ]
+    },
+    {
+      "id": "taxi_aplicativo",
+      "titulo": "Táxi e aplicativos de mobilidade",
+      "ref": "§4.2.3 / §4.4.1",
+      "efeito": "condicionar",
+      "condicao": "Seguir a IN 001-387 Utilização de Táxi; o pagamento depende também da aprovação de Frota Própria ou Viagens Corporativas.",
+      "categorias": [
+        "taxi_aplicativo"
+      ],
+      "palavras": [
+        "taxi",
+        "uber",
+        "99pop",
+        "99 pop",
+        "99app",
+        "cabify"
+      ],
+      "emitente": [
+        "uber",
+        "99 tecnologia",
+        "cabify",
+        "radio taxi",
+        "coopertaxi"
+      ]
+    },
+    {
+      "id": "aquisicao_bens",
+      "titulo": "Aquisição de bens e materiais (eletrônicos, eletrodomésticos, celulares, móveis, material de escritório, limpeza/copa)",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "condicao": "Deve ser comprado via Compras (Pedido de Compra com NF faturada para a Corporação), não por reembolso.",
+      "categorias": [
+        "eletronico_eletrodomestico",
+        "material_escritorio",
+        "limpeza_copa"
+      ],
+      "palavras": [
+        "celular",
+        "smartphone",
+        "notebook",
+        "tablet",
+        "fone de ouvido",
+        "carregador",
+        "cabo usb",
+        "mouse",
+        "teclado",
+        "monitor",
+        "impressora",
+        "toner",
+        "cartucho",
+        "papel a4",
+        "resma",
+        "caneta",
+        "grampeador",
+        "caderno",
+        "detergente",
+        "desinfetante",
+        "papel toalha",
+        "copo descartavel",
+        "agua sanitaria",
+        "eletrodomestico",
+        "microondas",
+        "cafeteira",
+        "ventilador",
+        "movel",
+        "cadeira"
+      ]
+    },
+    {
+      "id": "cursos_treinamentos",
+      "titulo": "Cursos, treinamentos e certificações externos",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "condicao": "Devem ser contratados em nome da empresa (IN 001-119). Exceção: inscrição em certificação ANBIMA (PI 033-013).",
+      "categorias": [
+        "curso_treinamento"
+      ],
+      "palavras": [
+        "curso",
+        "treinamento",
+        "workshop",
+        "inscricao em curso",
+        "mensalidade",
+        "matricula",
+        "certificacao"
+      ],
+      "excecoes": [
+        "anbima"
+      ]
+    },
+    {
+      "id": "entretenimento_software",
+      "titulo": "Entretenimento, software e serviços de qualquer natureza",
+      "ref": "§4.2.3",
+      "efeito": "indeferir",
+      "categorias": [
+        "entretenimento",
+        "software"
+      ],
+      "palavras": [
+        "cinema",
+        "ingresso",
+        "show",
+        "teatro",
+        "streaming",
+        "netflix",
+        "spotify",
+        "licenca de software",
+        "assinatura de software"
+      ]
+    },
+    {
+      "id": "servico_generico",
+      "titulo": "Serviços de qualquer natureza",
+      "ref": "§4.2.3",
+      "efeito": "alertar",
+      "condicao": "Serviços não são reembolsáveis (devem ir por Compras), exceto locomoção como pedágio, estacionamento e transporte público.",
+      "categorias": [
+        "servico"
+      ],
+      "palavras": []
+    },
+    {
+      "id": "refeicao",
+      "titulo": "Refeições",
+      "ref": "§4.2.3",
+      "efeito": "condicionar",
+      "condicao": "Só é reembolsável se for: (1) refeição em viagem — café da manhã, jantar ou almoço em fim de semana; (2) almoço comercial com corretores, com itens discriminados; ou (3) jornada extra, com autorização prévia e expressa do gestor. Almoço em dia útil fora de viagem: use o Vale Refeição.",
+      "categorias": [
+        "alimentacao"
+      ],
+      "palavras": []
+    }
+  ],
+  "permitidos": [
+    {
+      "titulo": "Pedágio e estacionamento",
+      "ref": "§4.2.3",
+      "categorias": [
+        "pedagio_estacionamento"
+      ]
+    },
+    {
+      "titulo": "Transporte público e translado terrestre (metrô, ônibus intermunicipal/estadual)",
+      "ref": "§4.2.3",
+      "categorias": [
+        "transporte_publico"
+      ]
+    },
+    {
+      "titulo": "Inscrição em certificação ANBIMA",
+      "ref": "§4.2.3",
+      "categorias": []
+    },
+    {
+      "titulo": "Frigobar e lavanderia em viagem (exceto bebidas alcoólicas)",
+      "ref": "§4.2.3",
+      "categorias": []
+    }
+  ]
+}
