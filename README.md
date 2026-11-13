@@ -53,32 +53,34 @@ uma versão CPU não utiliza a placa de vídeo.
 
 ## Como rodar
 
-São dois terminais: um para o modelo de visão e outro para a interface.
-
-Windows (PowerShell):
+Um único comando sobe o modelo de visão e a interface web e abre o navegador:
 
 ```powershell
-# Terminal 1 — modelo de visão em http://127.0.0.1:8080 (deixe aberto)
-.\.venv\Scripts\python.exe start_llm.py
-
-# Terminal 2 — interface web
-.\.venv\Scripts\python.exe -m reembolso.app
+python main.py
 ```
 
-Linux:
+Não é preciso ativar a venv: o `main.py` usa automaticamente o Python do `.venv`. Quando aparecer
+**Acesse no navegador: http://127.0.0.1:7860**, a interface está no ar. Arraste ou selecione o
+comprovante (foto ou PDF), informe opcionalmente o colaborador e o valor solicitado e clique em
+**Analisar**. O sistema não lê nenhuma pasta sozinho: analisa apenas o arquivo enviado.
 
-```bash
-.venv/bin/python start_llm.py        # Terminal 1
-.venv/bin/python -m reembolso.app    # Terminal 2
-```
+`Ctrl+C` no terminal encerra tudo. O log do modelo fica em `logs/llama-server.log`; ao terminar de
+carregar, o terminal mostra quantas camadas foram para a GPU. Se o modelo ou a interface já estiverem
+rodando, o `main.py` os reaproveita em vez de abrir outra cópia.
 
-Abra **http://127.0.0.1:7860** no navegador, **arraste ou selecione o comprovante** (foto ou PDF),
-informe opcionalmente o colaborador e o valor solicitado e clique em **Analisar**. O sistema não lê
-nenhuma pasta sozinho: analisa apenas o arquivo enviado.
+### Opções
+
+| Opção | Efeito |
+|---|---|
+| `--gpu-layers 0` | Só CPU. No Windows o padrão é 99 camadas na GPU (exige o binário CUDA); no Linux, o padrão do llama.cpp |
+| `--ctx N` | Contexto do modelo (padrão 8192, suficiente para PDF de 2 páginas). `--ctx 4096` economiza ~600 MB de RAM |
+| `--sem-navegador` | Não abre o navegador automaticamente |
+| `--so-modelo` | Sobe só o modelo (útil para usar a linha de comando) |
+| outras | Repassadas ao `llama-server` (ex.: `--flash-attn on`) |
 
 ### Linha de comando (opcional)
 
-Para analisar um arquivo sem abrir o navegador, passe o caminho de qualquer comprovante:
+Com o modelo no ar (`python main.py --so-modelo` em outro terminal), analise qualquer arquivo:
 
 ```powershell
 .\.venv\Scripts\python.exe -m reembolso.cli "C:\caminho\do\comprovante.pdf" --valor 30
@@ -87,15 +89,6 @@ Para analisar um arquivo sem abrir o navegador, passe o caminho de qualquer comp
 
 As pastas `arquivos/` e `recibos/` são ignoradas pelo Git, caso você queira guardar comprovantes
 localmente sem que eles sejam enviados ao repositório.
-
-### Opções do inicializador do modelo
-
-- No Windows, `start_llm.py` solicita até 99 camadas na GPU (exige o binário CUDA). Para usar só a CPU:
-  `--gpu-layers 0`. No Linux, o padrão do llama.cpp é mantido; use `--gpu-layers N` para ajustar.
-- `--ctx N` define o contexto (padrão 8192 tokens, suficiente para PDF de 2 páginas com texto).
-  Em máquina com pouca RAM, `--ctx 4096` economiza ~600 MB, mas PDFs longos podem falhar.
-- Outras opções são repassadas ao `llama-server` (ex.: `--port 8081`; nesse caso defina também
-  `REEMBOLSO_LLM_URL=http://127.0.0.1:8081/v1/chat/completions` antes de abrir a interface).
 
 Em CPU (i5-7300U), cada análise com IA leva de 1 a 4 minutos; com GPU, poucos segundos.
 
@@ -134,7 +127,7 @@ O sistema prioriza a revisão; **não deve reprovar sozinho**.
 ## Estrutura
 
 ```
-start_llm.py            sobe o llama-server no Windows ou Linux
+main.py                 sobe modelo + interface web e abre o navegador
 models/                 GGUF baixados de huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF
 bin/                    llama.cpp b12292 (CPU ou GPU)
 reembolso/pipeline.py   orquestração, regras e score

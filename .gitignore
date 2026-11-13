@@ -13,3 +13,6 @@ recibos/
 arquivos/
 dados/
 *.sqlite
+
+# Logs do inicializador
+logs/

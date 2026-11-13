@@ -119,7 +119,7 @@ def analisar(caminho: str, politica: Politica | None = None, colaborador: str = 
         except Exception as e:  # noqa: BLE001
             r.erro_llm = f"{type(e).__name__}: {e}"
     else:
-        r.erro_llm = "Servidor do modelo não está rodando (python start_llm.py)."
+        r.erro_llm = "Servidor do modelo não está rodando (python main.py)."
     if r.erro_llm:
         r.add("Extração", "alerta", f"Extração por IA indisponível: {r.erro_llm}", 0)
         if pol.registrar:
